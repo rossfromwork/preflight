@@ -16,6 +16,7 @@ const baseConfig: Config = {
         diagnostics: {
           ignoreCodes: [151002],
         },
+        tsconfig: 'tsconfig.test.json',
       },
     ],
   },

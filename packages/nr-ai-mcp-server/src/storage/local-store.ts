@@ -1,0 +1,146 @@
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+  readdirSync,
+  statSync,
+} from 'node:fs';
+import { resolve, join } from 'node:path';
+import { createLogger } from '@nr-ai-observatory/shared';
+import type { HookEvent, SessionSummary, AuditEntry } from './types.js';
+
+const logger = createLogger('local-store');
+
+export class LocalStore {
+  private readonly storagePath: string;
+  private readonly bufferPath: string;
+
+  constructor(storagePath: string, bufferPath?: string) {
+    this.storagePath = storagePath;
+    this.bufferPath = bufferPath ?? resolve(storagePath, 'buffer.jsonl');
+  }
+
+  initialize(): void {
+    const dirs = [
+      this.storagePath,
+      resolve(this.storagePath, 'sessions'),
+      resolve(this.storagePath, 'weekly_summaries'),
+      resolve(this.storagePath, 'audit'),
+    ];
+
+    for (const dir of dirs) {
+      if (!existsSync(dir)) {
+        mkdirSync(dir, { recursive: true });
+      }
+    }
+
+    logger.debug('Storage initialized', { path: this.storagePath });
+  }
+
+  /**
+   * Append a hook event as a JSON line to the buffer file.
+   * Uses appendFileSync for minimal latency (<5ms budget).
+   */
+  appendToBuffer(event: HookEvent): void {
+    try {
+      appendFileSync(this.bufferPath, JSON.stringify(event) + '\n');
+    } catch (err) {
+      // Never block the caller — log and move on
+      logger.warn('Failed to append to buffer', { error: String(err) });
+    }
+  }
+
+  /**
+   * Atomically drain all events from the buffer file.
+   * Renames the file to a temp path (atomic on POSIX), reads it, then deletes.
+   * This avoids data loss from concurrent hook writes during drain.
+   */
+  drainBuffer(): HookEvent[] {
+    if (!existsSync(this.bufferPath)) {
+      return [];
+    }
+
+    const tmpPath = this.bufferPath + '.drain';
+
+    try {
+      renameSync(this.bufferPath, tmpPath);
+    } catch {
+      // File may have been removed between the check and the rename
+      return [];
+    }
+
+    try {
+      const raw = readFileSync(tmpPath, 'utf-8');
+      unlinkSync(tmpPath);
+
+      if (!raw.trim()) {
+        return [];
+      }
+
+      const events: HookEvent[] = [];
+      for (const line of raw.split('\n')) {
+        if (!line.trim()) continue;
+        try {
+          events.push(JSON.parse(line) as HookEvent);
+        } catch {
+          logger.warn('Skipping malformed buffer line', { line: line.slice(0, 100) });
+        }
+      }
+      return events;
+    } catch (err) {
+      logger.warn('Failed to drain buffer', { error: String(err) });
+      return [];
+    }
+  }
+
+  saveSession(session: SessionSummary): void {
+    const filename = `${session.sessionId}.json`;
+    const filepath = resolve(this.storagePath, 'sessions', filename);
+    writeFileSync(filepath, JSON.stringify(session, null, 2) + '\n');
+    logger.debug('Session saved', { sessionId: session.sessionId });
+  }
+
+  loadRecentSessions(days: number): SessionSummary[] {
+    const sessionsDir = resolve(this.storagePath, 'sessions');
+    if (!existsSync(sessionsDir)) {
+      return [];
+    }
+
+    const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+    const sessions: SessionSummary[] = [];
+
+    for (const file of readdirSync(sessionsDir)) {
+      if (!file.endsWith('.json')) continue;
+      const filepath = join(sessionsDir, file);
+
+      try {
+        const stat = statSync(filepath);
+        if (stat.mtimeMs < cutoff) continue;
+
+        const raw = readFileSync(filepath, 'utf-8');
+        sessions.push(JSON.parse(raw) as SessionSummary);
+      } catch {
+        logger.warn('Skipping unreadable session file', { file });
+      }
+    }
+
+    return sessions.sort((a, b) => a.startTime - b.startTime);
+  }
+
+  appendAuditLog(entry: AuditEntry): void {
+    const date = new Date(entry.timestamp);
+    const dateStr = date.toISOString().slice(0, 10); // YYYY-MM-DD
+    const filename = `${dateStr}.jsonl`;
+    const filepath = resolve(this.storagePath, 'audit', filename);
+
+    try {
+      appendFileSync(filepath, JSON.stringify(entry) + '\n');
+    } catch (err) {
+      logger.warn('Failed to append audit log', { error: String(err) });
+    }
+  }
+}

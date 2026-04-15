@@ -19,7 +19,7 @@
 
 > Prerequisites that must exist before any feature work begins. The `nr-ai-mcp-server` package shares build infrastructure with the monorepo (tsconfig, jest, eslint) and depends on `@nr-ai-observatory/shared` for transport, config, logger, and pricing utilities. Phase 0 of the agent IMPLEMENTATION_PLAN must be completed first.
 
-### 0.1 — MCP Server TypeScript Scaffolding
+### ☑️ 0.1 — MCP Server TypeScript Scaffolding
 
 **Implementation:**
 
@@ -57,7 +57,7 @@
 
 ---
 
-### 0.2 — MCP Server Configuration
+### ☑️ 0.2 — MCP Server Configuration
 
 **Implementation:**
 
@@ -94,7 +94,7 @@
 
 ---
 
-### 0.3 — Local Storage Directory Setup
+### ☑️ 0.3 — Local Storage Directory Setup
 
 **Implementation:**
 
