@@ -40,8 +40,8 @@ async function testAnthropic(agent: ReturnType<typeof init>): Promise<void> {
 
   const text =
     response.content
-      .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
-      .map((b) => b.text)
+      .filter((b) => b.type === 'text')
+      .map((b) => ('text' in b ? b.text : ''))
       .join('') || '(no text)';
 
   log('anthropic', 'Non-streaming response:', {

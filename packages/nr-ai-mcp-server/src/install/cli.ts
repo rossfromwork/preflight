@@ -12,7 +12,10 @@ import { homedir } from 'node:os';
 import {
   mergeSettings,
   removeSettings,
+  mergeMcpConfig,
+  removeMcpConfig,
   detectSettingsPath,
+  detectMcpConfigPath,
   generateNrConfig,
 } from './install-helper.js';
 
@@ -45,15 +48,23 @@ function writeJsonFile(path: string, data: Record<string, unknown>): void {
 
 function handleInstall(options: { licenseKey?: string; accountId?: string; project?: boolean }): void {
   const scope = options.project ? 'project' : 'user';
+
+  // Hooks go in settings.json
   const settingsPath = detectSettingsPath(scope);
+  const existingSettings = readJsonFile(settingsPath);
+  const mergedSettings = mergeSettings(existingSettings);
+  writeJsonFile(settingsPath, mergedSettings);
 
-  const existing = readJsonFile(settingsPath);
-  const merged = mergeSettings(existing);
-  writeJsonFile(settingsPath, merged);
+  // MCP server goes in .mcp.json
+  const mcpPath = detectMcpConfigPath(scope);
+  const existingMcp = readJsonFile(mcpPath);
+  const mergedMcp = mergeMcpConfig(existingMcp);
+  writeJsonFile(mcpPath, mergedMcp);
 
-  console.log(`\n✓ Claude Code settings updated: ${settingsPath}`);
+  console.log(`\n✓ Claude Code hooks updated: ${settingsPath}`);
   console.log('  - Added PreToolUse and PostToolUse hooks');
-  console.log('  - Added nr-ai-observability MCP server registration');
+  console.log(`✓ MCP server registered: ${mcpPath}`);
+  console.log('  - Added nr-ai-observability MCP server');
 
   if (options.licenseKey && options.accountId) {
     const config = generateNrConfig(options.licenseKey, options.accountId);
@@ -75,20 +86,31 @@ function handleInstall(options: { licenseKey?: string; accountId?: string; proje
 
 function handleUninstall(options: { project?: boolean }): void {
   const scope = options.project ? 'project' : 'user';
-  const settingsPath = detectSettingsPath(scope);
 
-  if (!existsSync(settingsPath)) {
-    console.log(`\nNo settings file found at ${settingsPath}. Nothing to remove.`);
-    return;
+  // Remove hooks from settings.json
+  const settingsPath = detectSettingsPath(scope);
+  if (existsSync(settingsPath)) {
+    const existingSettings = readJsonFile(settingsPath);
+    const cleanedSettings = removeSettings(existingSettings);
+    writeJsonFile(settingsPath, cleanedSettings);
+    console.log(`\n✓ Hooks removed: ${settingsPath}`);
+  } else {
+    console.log(`\nNo settings file found at ${settingsPath}. Skipping hooks.`);
   }
 
-  const existing = readJsonFile(settingsPath);
-  const cleaned = removeSettings(existing);
-  writeJsonFile(settingsPath, cleaned);
+  // Remove MCP server from .mcp.json
+  const mcpPath = detectMcpConfigPath(scope);
+  if (existsSync(mcpPath)) {
+    const existingMcp = readJsonFile(mcpPath);
+    const cleanedMcp = removeMcpConfig(existingMcp);
 
-  console.log(`\n✓ Claude Code settings updated: ${settingsPath}`);
-  console.log('  - Removed nr-ai-observe hooks');
-  console.log('  - Removed nr-ai-observability MCP server registration');
+    // If .mcp.json is now empty (no mcpServers key or empty object), leave it minimal
+    writeJsonFile(mcpPath, cleanedMcp);
+    console.log(`✓ MCP server removed: ${mcpPath}`);
+  } else {
+    console.log(`No MCP config found at ${mcpPath}. Skipping MCP server.`);
+  }
+
   console.log('\nRestart Claude Code for changes to take effect.\n');
 }
 

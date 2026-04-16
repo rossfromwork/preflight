@@ -73,8 +73,13 @@ async function main(): Promise<void> {
   process.on('SIGTERM', shutdown);
 }
 
-// Only run main() when executed directly (not when imported for testing)
-if (process.argv[1] && /index\.[jt]s$/.test(process.argv[1])) {
+// Only run main() when executed directly (not when imported for testing).
+// Resolve symlinks so this also matches when invoked via the `nr-ai-mcp-server` bin link.
+import { realpathSync } from 'node:fs';
+const resolvedArgv1 = (() => {
+  try { return realpathSync(process.argv[1]); } catch { return process.argv[1]; }
+})();
+if (resolvedArgv1 && /index\.[jt]s$/.test(resolvedArgv1)) {
   main().catch((err: unknown) => {
     logger.error('Fatal error', { error: String(err) });
     process.exit(1);

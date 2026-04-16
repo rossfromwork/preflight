@@ -13,7 +13,7 @@ import { homedir } from 'node:os';
 
 const HOOK_COMMAND_PRE = 'nr-ai-observe pre-tool';
 const HOOK_COMMAND_POST = 'nr-ai-observe post-tool';
-const HOOK_MATCHER = '.*';
+const HOOK_MATCHER = '';
 const MCP_SERVER_KEY = 'nr-ai-observability';
 const MCP_SERVER_COMMAND = 'nr-ai-mcp-server';
 const NR_OBSERVE_MARKER = 'nr-ai-observe';
@@ -22,9 +22,14 @@ const NR_OBSERVE_MARKER = 'nr-ai-observe';
 // Types
 // ---------------------------------------------------------------------------
 
+export interface HookCommand {
+  type: 'command';
+  command: string;
+}
+
 export interface HookEntry {
   matcher: string;
-  command: string;
+  hooks: HookCommand[];
 }
 
 export interface HookEntries {
@@ -48,8 +53,8 @@ export interface NrObserveConfig {
 
 export function generateHookEntries(): HookEntries {
   return {
-    PreToolUse: [{ matcher: HOOK_MATCHER, command: HOOK_COMMAND_PRE }],
-    PostToolUse: [{ matcher: HOOK_MATCHER, command: HOOK_COMMAND_POST }],
+    PreToolUse: [{ matcher: HOOK_MATCHER, hooks: [{ type: 'command', command: HOOK_COMMAND_PRE }] }],
+    PostToolUse: [{ matcher: HOOK_MATCHER, hooks: [{ type: 'command', command: HOOK_COMMAND_POST }] }],
   };
 }
 
@@ -74,32 +79,51 @@ export function detectSettingsPath(scope: 'user' | 'project'): string {
   return resolve(process.cwd(), '.claude', 'settings.json');
 }
 
+export function detectMcpConfigPath(scope: 'user' | 'project'): string {
+  if (scope === 'user') {
+    return resolve(homedir(), '.mcp.json');
+  }
+  return resolve(process.cwd(), '.mcp.json');
+}
+
 // ---------------------------------------------------------------------------
 // Merge helpers
 // ---------------------------------------------------------------------------
 
+function entryContainsNrObserve(entry: unknown): boolean {
+  if (typeof entry !== 'object' || entry === null) return false;
+  const obj = entry as Record<string, unknown>;
+
+  // New format: { matcher, hooks: [{ type, command }] }
+  if (Array.isArray(obj.hooks)) {
+    return obj.hooks.some(
+      (h: unknown) =>
+        typeof h === 'object' &&
+        h !== null &&
+        'command' in (h as Record<string, unknown>) &&
+        typeof (h as Record<string, unknown>).command === 'string' &&
+        ((h as Record<string, unknown>).command as string).includes(NR_OBSERVE_MARKER),
+    );
+  }
+
+  // Legacy flat format: { matcher, command }
+  if (
+    'command' in obj &&
+    typeof obj.command === 'string' &&
+    obj.command.includes(NR_OBSERVE_MARKER)
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 function hasNrObserveCommand(entries: unknown[]): boolean {
-  return entries.some(
-    (e) =>
-      typeof e === 'object' &&
-      e !== null &&
-      'command' in e &&
-      typeof (e as Record<string, unknown>).command === 'string' &&
-      ((e as Record<string, unknown>).command as string).includes(NR_OBSERVE_MARKER),
-  );
+  return entries.some(entryContainsNrObserve);
 }
 
 function filterNrObserveEntries(entries: unknown[]): unknown[] {
-  return entries.filter(
-    (e) =>
-      !(
-        typeof e === 'object' &&
-        e !== null &&
-        'command' in e &&
-        typeof (e as Record<string, unknown>).command === 'string' &&
-        ((e as Record<string, unknown>).command as string).includes(NR_OBSERVE_MARKER)
-      ),
-  );
+  return entries.filter((e) => !entryContainsNrObserve(e));
 }
 
 // ---------------------------------------------------------------------------
@@ -128,7 +152,16 @@ export function mergeSettings(existing: Record<string, unknown>): Record<string,
 
   result.hooks = hooks;
 
-  // --- MCP Servers ---
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// mergeMcpConfig — operates on ~/.mcp.json (separate from settings.json)
+// ---------------------------------------------------------------------------
+
+export function mergeMcpConfig(existing: Record<string, unknown>): Record<string, unknown> {
+  const result = { ...existing };
+
   const mcpServers: Record<string, unknown> =
     typeof result.mcpServers === 'object' && result.mcpServers !== null
       ? { ...(result.mcpServers as Record<string, unknown>) }
@@ -173,7 +206,16 @@ export function removeSettings(existing: Record<string, unknown>): Record<string
     }
   }
 
-  // --- MCP Servers ---
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// removeMcpConfig — operates on ~/.mcp.json (separate from settings.json)
+// ---------------------------------------------------------------------------
+
+export function removeMcpConfig(existing: Record<string, unknown>): Record<string, unknown> {
+  const result = { ...existing };
+
   if (typeof result.mcpServers === 'object' && result.mcpServers !== null) {
     const mcpServers = { ...(result.mcpServers as Record<string, unknown>) };
     delete mcpServers[MCP_SERVER_KEY];
