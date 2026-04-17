@@ -89,7 +89,7 @@ describe('init()', () => {
     expect(second).toBe(first);
 
     // Verify warning was logged
-    const logOutput = stderrSpy.mock.calls.map((c) => c[0] as string).join('');
+    const logOutput = stderrSpy.mock.calls.map((c: unknown[]) => c[0] as string).join('');
     expect(logOutput).toContain('init() called multiple times');
 
     await first.shutdown();

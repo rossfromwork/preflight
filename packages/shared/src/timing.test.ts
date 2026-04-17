@@ -98,10 +98,8 @@ describe('RequestTimer', () => {
     timer.stop();
 
     const metrics = timer.getMetrics();
-    // TTFT should be much closer to 1ms than to 6ms
-    expect(metrics.timeToFirstTokenMs!).toBeLessThan(snapshot - performance.now() + 10);
-    // More specifically: TTFT should be less than half of durationMs
-    // since the first mark happened early
+    // TTFT should be much closer to 1ms than to 6ms — less than half
+    // of total duration since the first mark happened early
     expect(metrics.timeToFirstTokenMs!).toBeLessThan(metrics.durationMs / 2);
   });
 

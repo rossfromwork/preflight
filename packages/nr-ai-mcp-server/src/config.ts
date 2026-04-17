@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 import { createLogger } from '@nr-ai-observatory/shared';
 import type { LogLevel } from '@nr-ai-observatory/shared';
 import type { CliOptions } from './types.js';
+import type { UpstreamConfig } from './proxy/types.js';
 
 const logger = createLogger('mcp-config');
 
@@ -22,6 +23,7 @@ export interface McpServerConfig {
   readonly port: number;
   readonly logLevel: LogLevel;
   readonly collectorHost: string | null;
+  readonly proxyUpstreams: readonly UpstreamConfig[];
 }
 
 const DEFAULT_STORAGE_PATH = resolve(homedir(), '.nr-ai-observe');
@@ -80,6 +82,24 @@ function resolveCollectorHost(
     return 'eu';
   }
   return null;
+}
+
+function parseProxyUpstreams(
+  envValue: string | undefined,
+  fileValue: unknown,
+): readonly UpstreamConfig[] {
+  // Env var takes precedence (JSON string)
+  if (envValue) {
+    try {
+      const parsed = JSON.parse(envValue);
+      if (Array.isArray(parsed)) return parsed as UpstreamConfig[];
+    } catch {
+      logger.warn('Invalid JSON in NEW_RELIC_AI_MCP_PROXY_UPSTREAMS env var');
+    }
+  }
+  // Config file
+  if (Array.isArray(fileValue)) return fileValue as UpstreamConfig[];
+  return [];
 }
 
 export function loadMcpConfig(cliOptions?: Partial<CliOptions>): Readonly<McpServerConfig> {
@@ -175,6 +195,11 @@ export function loadMcpConfig(cliOptions?: Partial<CliOptions>): Readonly<McpSer
       licenseKey,
       process.env.NEW_RELIC_HOST ??
         (typeof file.collectorHost === 'string' ? file.collectorHost : null),
+    ),
+
+    proxyUpstreams: parseProxyUpstreams(
+      process.env.NEW_RELIC_AI_MCP_PROXY_UPSTREAMS,
+      file.proxyUpstreams,
     ),
   };
 

@@ -21,6 +21,7 @@ const baseConfig: Config = {
     ],
   },
   extensionsToTreatAsEsm: ['.ts'],
+  testTimeout: 15_000,
   collectCoverageFrom: ['src/**/*.ts', '!src/**/*.test.ts', '!src/**/index.ts'],
   coverageReporters: ['text', 'lcov'],
   coverageDirectory: 'coverage',

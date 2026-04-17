@@ -28,6 +28,7 @@ beforeEach(() => {
   delete process.env.NEW_RELIC_AI_MCP_HARVEST_EVENTS_MS;
   delete process.env.NEW_RELIC_AI_MCP_HARVEST_METRICS_MS;
   delete process.env.NEW_RELIC_HOST;
+  delete process.env.NEW_RELIC_AI_MCP_PROXY_UPSTREAMS;
 });
 
 afterEach(() => {
@@ -214,6 +215,48 @@ describe('loadMcpConfig()', () => {
     const config = loadMcpConfig({ config: configPath });
     expect(config.harvestIntervalMs.events).toBe(10000);
     expect(config.harvestIntervalMs.metrics).toBe(120000);
+  });
+
+  it('proxyUpstreams defaults to empty array', () => {
+    process.env.NEW_RELIC_LICENSE_KEY = 'test-key';
+    process.env.NEW_RELIC_ACCOUNT_ID = '12345';
+    const configPath = writeConfigFile({});
+    const config = loadMcpConfig({ config: configPath });
+    expect(config.proxyUpstreams).toEqual([]);
+  });
+
+  it('proxyUpstreams loaded from config file', () => {
+    process.env.NEW_RELIC_LICENSE_KEY = 'test-key';
+    process.env.NEW_RELIC_ACCOUNT_ID = '12345';
+    const upstreams = [
+      { name: 'server-a', url: 'http://localhost:3000', transportType: 'http' },
+      { name: 'server-b', command: 'node', args: ['server.js'], transportType: 'stdio' },
+    ];
+    const configPath = writeConfigFile({ proxyUpstreams: upstreams });
+    const config = loadMcpConfig({ config: configPath });
+    expect(config.proxyUpstreams).toEqual(upstreams);
+  });
+
+  it('proxyUpstreams from env var overrides config file', () => {
+    process.env.NEW_RELIC_LICENSE_KEY = 'test-key';
+    process.env.NEW_RELIC_ACCOUNT_ID = '12345';
+    const envUpstreams = [{ name: 'env-server', url: 'http://localhost:4000', transportType: 'http' }];
+    process.env.NEW_RELIC_AI_MCP_PROXY_UPSTREAMS = JSON.stringify(envUpstreams);
+    const configPath = writeConfigFile({
+      proxyUpstreams: [{ name: 'file-server', url: 'http://localhost:3000', transportType: 'http' }],
+    });
+    const config = loadMcpConfig({ config: configPath });
+    expect(config.proxyUpstreams).toEqual(envUpstreams);
+  });
+
+  it('invalid proxyUpstreams env var falls back to file', () => {
+    process.env.NEW_RELIC_LICENSE_KEY = 'test-key';
+    process.env.NEW_RELIC_ACCOUNT_ID = '12345';
+    process.env.NEW_RELIC_AI_MCP_PROXY_UPSTREAMS = 'not-json';
+    const upstreams = [{ name: 'server-a', url: 'http://localhost:3000', transportType: 'http' }];
+    const configPath = writeConfigFile({ proxyUpstreams: upstreams });
+    const config = loadMcpConfig({ config: configPath });
+    expect(config.proxyUpstreams).toEqual(upstreams);
   });
 });
 

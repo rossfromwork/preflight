@@ -54,14 +54,14 @@ export interface SessionMetrics {
 
 const MAX_TIMELINE_ENTRIES = 10_000;
 
-function computeP95(values: number[]): number {
+export function computeP95(values: number[]): number {
   if (values.length === 0) return 0;
   const sorted = [...values].sort((a, b) => a - b);
   const index = Math.floor(sorted.length * 0.95);
   return sorted[Math.min(index, sorted.length - 1)]!;
 }
 
-function computeDurationStats(durations: number[]): DurationStats {
+export function computeDurationStats(durations: number[]): DurationStats {
   if (durations.length === 0) {
     return { count: 0, sum: 0, min: 0, max: 0, p95: 0 };
   }

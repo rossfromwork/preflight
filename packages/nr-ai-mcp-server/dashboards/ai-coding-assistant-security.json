@@ -1,0 +1,158 @@
+{
+  "name": "AI Coding Assistant — Security Audit",
+  "description": "Security audit trail dashboard for AI coding assistant sessions. Tracks security alerts, sensitive file access, destructive commands, external network requests, and MCP server access patterns. Requires AiAuditEvent, AiToolCall, and AiMcpToolCall custom events sent by the MCP server.",
+  "permissions": "PUBLIC_READ_WRITE",
+  "pages": [
+    {
+      "name": "AI Coding Assistant — Security Audit",
+      "description": "Security alerts, file access audit, bash command history, and external access patterns",
+      "widgets": [
+        {
+          "title": "Total Security Alerts Today",
+          "layout": { "column": 1, "row": 1, "width": 4, "height": 3 },
+          "visualization": { "id": "viz.billboard" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountIds": [],
+                "query": "SELECT count(*) AS 'Alerts' FROM AiAuditEvent WHERE audit.security_alert = true SINCE today"
+              }
+            ],
+            "thresholds": [
+              { "alertSeverity": "WARNING", "value": 1 },
+              { "alertSeverity": "CRITICAL", "value": 10 }
+            ]
+          }
+        },
+        {
+          "title": "Critical Alerts Today",
+          "layout": { "column": 5, "row": 1, "width": 4, "height": 3 },
+          "visualization": { "id": "viz.billboard" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountIds": [],
+                "query": "SELECT count(*) AS 'Critical' FROM AiAuditEvent WHERE audit.severity = 'critical' SINCE today"
+              }
+            ],
+            "thresholds": [
+              { "alertSeverity": "WARNING", "value": 1 },
+              { "alertSeverity": "CRITICAL", "value": 5 }
+            ]
+          }
+        },
+        {
+          "title": "High Severity Alerts Today",
+          "layout": { "column": 9, "row": 1, "width": 4, "height": 3 },
+          "visualization": { "id": "viz.billboard" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountIds": [],
+                "query": "SELECT count(*) AS 'High' FROM AiAuditEvent WHERE audit.severity = 'high' SINCE today"
+              }
+            ],
+            "thresholds": [
+              { "alertSeverity": "WARNING", "value": 3 },
+              { "alertSeverity": "CRITICAL", "value": 10 }
+            ]
+          }
+        },
+
+        {
+          "title": "Recent Security Alerts",
+          "layout": { "column": 1, "row": 4, "width": 8, "height": 3 },
+          "visualization": { "id": "viz.table" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountIds": [],
+                "query": "SELECT timestamp, action, audit.severity, audit.alert_type, tool, detail, developer FROM AiAuditEvent WHERE audit.security_alert = true SINCE 24 hours ago LIMIT 50"
+              }
+            ]
+          }
+        },
+        {
+          "title": "Sensitive File Accesses",
+          "layout": { "column": 9, "row": 4, "width": 4, "height": 3 },
+          "visualization": { "id": "viz.bar" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountIds": [],
+                "query": "SELECT count(*) FROM AiAuditEvent WHERE action = 'FileRead' AND audit.security_alert = true FACET file_path SINCE 7 days ago"
+              }
+            ]
+          }
+        },
+
+        {
+          "title": "Bash Command Log",
+          "layout": { "column": 1, "row": 7, "width": 8, "height": 3 },
+          "visualization": { "id": "viz.table" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountIds": [],
+                "query": "SELECT timestamp, detail, developer FROM AiAuditEvent WHERE action = 'BashCommand' SINCE 1 hour ago ORDER BY timestamp DESC LIMIT 100"
+              }
+            ]
+          }
+        },
+        {
+          "title": "Destructive Command Attempts",
+          "layout": { "column": 9, "row": 7, "width": 4, "height": 3 },
+          "visualization": { "id": "viz.bar" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountIds": [],
+                "query": "SELECT count(*) FROM AiAuditEvent WHERE action = 'BashCommand' AND audit.severity = 'critical' FACET detail SINCE 7 days ago"
+              }
+            ]
+          }
+        },
+
+        {
+          "title": "External Network Requests",
+          "layout": { "column": 1, "row": 10, "width": 4, "height": 3 },
+          "visualization": { "id": "viz.bar" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountIds": [],
+                "query": "SELECT count(*) FROM AiAuditEvent WHERE action = 'BashCommand' AND audit.alert_type = 'external_network' FACET detail SINCE 7 days ago"
+              }
+            ]
+          }
+        },
+        {
+          "title": "MCP Server Access Patterns",
+          "layout": { "column": 5, "row": 10, "width": 4, "height": 3 },
+          "visualization": { "id": "viz.bar" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountIds": [],
+                "query": "SELECT count(*) FROM AiMcpToolCall FACET server, tool SINCE 7 days ago"
+              }
+            ]
+          }
+        },
+        {
+          "title": "Permission Denials",
+          "layout": { "column": 9, "row": 10, "width": 4, "height": 3 },
+          "visualization": { "id": "viz.bar" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountIds": [],
+                "query": "SELECT count(*) FROM AiToolCall WHERE success = false FACET tool, error_type SINCE 7 days ago"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

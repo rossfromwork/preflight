@@ -33,6 +33,12 @@ export function getMetricApiUrl(region: 'us' | 'eu'): string {
   return `https://${host}/metric/v1`;
 }
 
+export function getLogsApiUrl(region: 'us' | 'eu'): string {
+  const host =
+    region === 'eu' ? 'log-api.eu.newrelic.com' : 'log-api.newrelic.com';
+  return `https://${host}/log/v1`;
+}
+
 export async function compressPayload(data: unknown): Promise<Buffer> {
   const json = JSON.stringify(data);
   return gzipAsync(Buffer.from(json)) as Promise<Buffer>;

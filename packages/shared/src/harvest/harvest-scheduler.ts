@@ -94,7 +94,7 @@ export class HarvestScheduler {
     this.metricIntervalId.unref();
 
     process.once('beforeExit', this.boundBeforeExit);
-    process.on('SIGTERM', this.boundSigterm);
+    process.once('SIGTERM', this.boundSigterm);
 
     logger.info('Harvest scheduler started', {
       eventIntervalMs: this.eventHarvestIntervalMs,

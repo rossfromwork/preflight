@@ -8,3 +8,5 @@ export { AntiPatternDetector } from './anti-patterns.js';
 export type { AntiPattern, AntiPatternType, AntiPatternMetrics, AntiPatternOptions } from './anti-patterns.js';
 export { EfficiencyScorer } from './efficiency-score.js';
 export type { EfficiencyScore, EfficiencyScoreComponents, EfficiencyScoreOptions } from './efficiency-score.js';
+export { ProxyMetricsTracker } from './proxy-metrics.js';
+export type { ProxyMetrics, ServerStats } from './proxy-metrics.js';

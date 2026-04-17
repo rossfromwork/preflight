@@ -64,11 +64,32 @@ export class NrMcpServer {
       });
     }
 
-    this.server.setRequestHandler(ListResourcesRequestSchema, async () => ({
-      resources: [],
-    }));
+    this.server.setRequestHandler(ListResourcesRequestSchema, async () => {
+      const resources: Array<{ uri: string; name: string; description: string; mimeType: string }> = [];
+      if (options.auditTrailManager) {
+        resources.push({
+          uri: 'nr-observe://session/audit-log',
+          name: 'Session Audit Log',
+          description: 'Security audit trail for the current session — all tool calls with classification and alerts',
+          mimeType: 'application/json',
+        });
+      }
+      return { resources };
+    });
 
     this.server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+      if (request.params.uri === 'nr-observe://session/audit-log' && options.auditTrailManager) {
+        const entries = options.auditTrailManager.getAuditLog();
+        return {
+          contents: [
+            {
+              uri: request.params.uri,
+              mimeType: 'application/json',
+              text: JSON.stringify(entries, null, 2),
+            },
+          ],
+        };
+      }
       throw new McpError(
         ErrorCode.InvalidRequest,
         `Unknown resource: ${request.params.uri}`,
@@ -98,6 +119,7 @@ export function createServer(options?: Partial<ServerOptions>): NrMcpServer {
     antiPatternDetector: options?.antiPatternDetector,
     efficiencyScorer: options?.efficiencyScorer,
     feedbackCollector: options?.feedbackCollector,
+    auditTrailManager: options?.auditTrailManager,
   };
   return new NrMcpServer(resolved);
 }

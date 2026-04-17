@@ -88,7 +88,7 @@ describe.each(dashboards)('Dashboard: $file', ({ file, dashboard }) => {
 
   it('all FROM clauses reference known event types', () => {
     const queries = getAllQueries(dashboard);
-    const validEventTypes = new Set(['AiToolCall', 'Metric', 'AiCodingTask', 'AiAntiPattern']);
+    const validEventTypes = new Set(['AiToolCall', 'Metric', 'AiCodingTask', 'AiAntiPattern', 'AiAuditEvent', 'SecurityAlert', 'AiMcpToolCall']);
 
     for (const query of queries) {
       const fromMatch = query.match(/FROM\s+(\w+)/i);
@@ -158,6 +158,34 @@ describe('Team View dashboard', () => {
     const queries = getAllQueries(teamView!.dashboard);
     const timeseriesQueries = queries.filter(q => q.includes('TIMESERIES'));
     expect(timeseriesQueries.length).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe('Security Audit dashboard', () => {
+  const security = dashboards.find(d => d.file === 'ai-coding-assistant-security.json');
+
+  it('exists', () => {
+    expect(security).toBeDefined();
+  });
+
+  it('has the correct name', () => {
+    expect(security!.dashboard.name).toBe('AI Coding Assistant — Security Audit');
+  });
+
+  it('has 4 rows of widgets (10 total)', () => {
+    expect(security!.dashboard.pages[0].widgets).toHaveLength(10);
+  });
+
+  it('includes audit.security_alert filter queries', () => {
+    const queries = getAllQueries(security!.dashboard);
+    const alertQueries = queries.filter(q => q.includes('audit.security_alert'));
+    expect(alertQueries.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('includes audit.severity filter queries', () => {
+    const queries = getAllQueries(security!.dashboard);
+    const severityQueries = queries.filter(q => q.includes('audit.severity'));
+    expect(severityQueries.length).toBeGreaterThanOrEqual(2);
   });
 });
 

@@ -1,0 +1,551 @@
+import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import {
+  createServer as createHttpServer,
+  type IncomingMessage,
+  type ServerResponse,
+  type Server,
+} from 'node:http';
+import { performance } from 'node:perf_hooks';
+import { ProxyManager } from './proxy-manager.js';
+import type { ProxyToolCallRecord, ProxyRequestRecord } from './types.js';
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+let stderrSpy: ReturnType<typeof jest.spyOn>;
+
+beforeEach(() => {
+  stderrSpy = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+});
+
+afterEach(() => {
+  stderrSpy.mockRestore();
+});
+
+/** Create a mock MCP HTTP server that responds to JSON-RPC requests. */
+function createMockMcpServer(
+  handler?: (rpc: { method: string; id?: number; params?: unknown }, req: IncomingMessage, res: ServerResponse) => void,
+): Promise<{ server: Server; port: number }> {
+  return new Promise((resolve) => {
+    const server = createHttpServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', (chunk: Buffer) => chunks.push(chunk));
+      req.on('end', () => {
+        const body = Buffer.concat(chunks).toString();
+        let rpc: { method: string; id?: number; params?: unknown } = { method: '' };
+        try {
+          rpc = JSON.parse(body);
+        } catch {
+          // not JSON — still pass to handler
+        }
+
+        if (handler) {
+          handler(rpc, req, res);
+        } else {
+          // Default: echo back a success response
+          const response = JSON.stringify({
+            jsonrpc: '2.0',
+            id: rpc.id ?? null,
+            result: { tools: [] },
+          });
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(response);
+        }
+      });
+    });
+    server.listen(0, '127.0.0.1', () => {
+      const addr = server.address();
+      const port = typeof addr === 'object' && addr ? addr.port : 0;
+      resolve({ server, port });
+    });
+  });
+}
+
+function closeServer(server: Server): Promise<void> {
+  return new Promise((resolve) => server.close(() => resolve()));
+}
+
+/** Simple HTTP request helper. */
+function httpRequest(
+  url: string,
+  options: {
+    method?: string;
+    headers?: Record<string, string>;
+    body?: string;
+  } = {},
+): Promise<{ statusCode: number; headers: Record<string, string>; body: string }> {
+  return new Promise((resolve, reject) => {
+    const { request } = require('node:http') as typeof import('node:http');
+    const parsed = new URL(url);
+    const req = request(
+      {
+        hostname: parsed.hostname,
+        port: parsed.port,
+        path: parsed.pathname,
+        method: options.method ?? 'POST',
+        headers: options.headers,
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (chunk: Buffer) => chunks.push(chunk));
+        res.on('end', () => {
+          resolve({
+            statusCode: res.statusCode ?? 0,
+            headers: res.headers as Record<string, string>,
+            body: Buffer.concat(chunks).toString(),
+          });
+        });
+      },
+    );
+    req.on('error', reject);
+    if (options.body) req.write(options.body);
+    req.end();
+  });
+}
+
+// ---------------------------------------------------------------------------
+// ProxyManager basics
+// ---------------------------------------------------------------------------
+
+describe('ProxyManager', () => {
+  let manager: ProxyManager;
+
+  afterEach(async () => {
+    if (manager) await manager.stop();
+  });
+
+  it('registers an upstream and exposes it via getUpstreamNames()', () => {
+    manager = new ProxyManager({ port: 0 });
+    manager.registerUpstream({
+      name: 'test-server',
+      url: 'http://localhost:1234',
+      transportType: 'http',
+    });
+    expect(manager.getUpstreamNames()).toEqual(['test-server']);
+  });
+
+  it('registers multiple upstreams', () => {
+    manager = new ProxyManager({ port: 0 });
+    manager.registerUpstream({ name: 'server-a', url: 'http://localhost:1', transportType: 'http' });
+    manager.registerUpstream({ name: 'server-b', url: 'http://localhost:2', transportType: 'http' });
+    expect(manager.getUpstreamNames()).toEqual(['server-a', 'server-b']);
+  });
+
+  it('getUpstream() returns the registered upstream', () => {
+    manager = new ProxyManager({ port: 0 });
+    manager.registerUpstream({ name: 'test', url: 'http://localhost:1', transportType: 'http' });
+    const upstream = manager.getUpstream('test');
+    expect(upstream).toBeDefined();
+    expect(upstream!.name).toBe('test');
+  });
+
+  it('getUpstream() returns undefined for unknown names', () => {
+    manager = new ProxyManager({ port: 0 });
+    expect(manager.getUpstream('nonexistent')).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// HTTP server routing
+// ---------------------------------------------------------------------------
+
+describe('ProxyManager HTTP server', () => {
+  let manager: ProxyManager;
+  let mockServer: Server;
+  let proxyPort: number;
+
+  afterEach(async () => {
+    if (manager) await manager.stop();
+    if (mockServer) await closeServer(mockServer);
+  });
+
+  async function setupProxy(
+    mockPort: number,
+    options?: Partial<{ onToolCall: (r: ProxyToolCallRecord) => void; onRequest: (r: ProxyRequestRecord) => void }>,
+  ) {
+    // Use port 0 to get a random available port
+    manager = new ProxyManager({
+      port: 0,
+      ...options,
+    });
+    manager.registerUpstream({
+      name: 'test-mcp',
+      url: `http://127.0.0.1:${mockPort}`,
+      transportType: 'http',
+    });
+    await manager.start();
+    // Get the actual port the server is listening on
+    const addr = (manager as unknown as { httpServer: { address: () => { port: number } } }).httpServer?.address();
+    proxyPort = typeof addr === 'object' && addr ? addr.port : 0;
+  }
+
+  it('responds to GET /health with upstream list', async () => {
+    ({ server: mockServer, port: proxyPort } = await createMockMcpServer());
+    const mockPort = proxyPort;
+
+    manager = new ProxyManager({ port: 0 });
+    manager.registerUpstream({ name: 'server-a', url: `http://127.0.0.1:${mockPort}`, transportType: 'http' });
+    manager.registerUpstream({ name: 'server-b', url: `http://127.0.0.1:${mockPort}`, transportType: 'http' });
+    await manager.start();
+    const addr = (manager as unknown as { httpServer: { address: () => { port: number } } }).httpServer?.address();
+    proxyPort = typeof addr === 'object' && addr ? addr.port : 0;
+
+    const response = await httpRequest(`http://127.0.0.1:${proxyPort}/health`, { method: 'GET' });
+    expect(response.statusCode).toBe(200);
+    const body = JSON.parse(response.body);
+    expect(body.status).toBe('ok');
+    expect(body.upstreams).toEqual(['server-a', 'server-b']);
+  });
+
+  it('returns 404 for unknown upstream', async () => {
+    ({ server: mockServer, port: proxyPort } = await createMockMcpServer());
+    await setupProxy(proxyPort);
+
+    const response = await httpRequest(`http://127.0.0.1:${proxyPort}/proxy/unknown-server`, {
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+      headers: { 'content-type': 'application/json' },
+    });
+
+    expect(response.statusCode).toBe(404);
+    const body = JSON.parse(response.body);
+    expect(body.error).toBe('upstream_not_found');
+  });
+
+  it('returns 404 for unrecognized routes', async () => {
+    ({ server: mockServer, port: proxyPort } = await createMockMcpServer());
+    await setupProxy(proxyPort);
+
+    const response = await httpRequest(`http://127.0.0.1:${proxyPort}/something-else`, {
+      body: '{}',
+    });
+
+    expect(response.statusCode).toBe(404);
+  });
+
+  it('forwards tools/list to upstream and returns response unchanged', async () => {
+    const expectedResponse = { jsonrpc: '2.0', id: 1, result: { tools: [{ name: 'read_file', inputSchema: { type: 'object' } }] } };
+
+    ({ server: mockServer, port: proxyPort } = await createMockMcpServer((rpc, _req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ jsonrpc: '2.0', id: rpc.id, result: { tools: [{ name: 'read_file', inputSchema: { type: 'object' } }] } }));
+    }));
+    await setupProxy(proxyPort);
+
+    const response = await httpRequest(`http://127.0.0.1:${proxyPort}/proxy/test-mcp`, {
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+      headers: { 'content-type': 'application/json' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = JSON.parse(response.body);
+    expect(body.result.tools[0].name).toBe('read_file');
+  });
+
+  it('forwards tools/call to upstream and returns response unchanged', async () => {
+    const toolResult = { content: [{ type: 'text', text: 'file contents here' }] };
+
+    ({ server: mockServer, port: proxyPort } = await createMockMcpServer((rpc, _req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ jsonrpc: '2.0', id: rpc.id, result: toolResult }));
+    }));
+    await setupProxy(proxyPort);
+
+    const response = await httpRequest(`http://127.0.0.1:${proxyPort}/proxy/test-mcp`, {
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/call',
+        params: { name: 'read_file', arguments: { path: '/tmp/test.txt' } },
+      }),
+      headers: { 'content-type': 'application/json' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = JSON.parse(response.body);
+    expect(body.result.content[0].text).toBe('file contents here');
+  });
+
+  it('propagates upstream error (500) with same status and body', async () => {
+    const errorBody = JSON.stringify({ jsonrpc: '2.0', id: 1, error: { code: -32603, message: 'Internal error' } });
+
+    ({ server: mockServer, port: proxyPort } = await createMockMcpServer((_rpc, _req, res) => {
+      res.writeHead(500, { 'content-type': 'application/json' });
+      res.end(errorBody);
+    }));
+    await setupProxy(proxyPort);
+
+    const response = await httpRequest(`http://127.0.0.1:${proxyPort}/proxy/test-mcp`, {
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'bad_tool' } }),
+      headers: { 'content-type': 'application/json' },
+    });
+
+    expect(response.statusCode).toBe(500);
+    expect(response.body).toBe(errorBody);
+  });
+
+  it('forwards auth headers to upstream', async () => {
+    let receivedHeaders: Record<string, string | string[] | undefined> = {};
+
+    ({ server: mockServer, port: proxyPort } = await createMockMcpServer((_rpc, req, res) => {
+      receivedHeaders = req.headers;
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"jsonrpc":"2.0","id":1,"result":{}}');
+    }));
+    await setupProxy(proxyPort);
+
+    await httpRequest(`http://127.0.0.1:${proxyPort}/proxy/test-mcp`, {
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+      headers: {
+        'content-type': 'application/json',
+        'authorization': 'Bearer test-token-123',
+        'mcp-session-id': 'session-abc',
+        'x-custom-header': 'custom-value',
+      },
+    });
+
+    expect(receivedHeaders['authorization']).toBe('Bearer test-token-123');
+    expect(receivedHeaders['mcp-session-id']).toBe('session-abc');
+    expect(receivedHeaders['x-custom-header']).toBe('custom-value');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Observability records
+// ---------------------------------------------------------------------------
+
+describe('ProxyManager observability', () => {
+  let manager: ProxyManager;
+  let mockServer: Server;
+  let proxyPort: number;
+
+  afterEach(async () => {
+    if (manager) await manager.stop();
+    if (mockServer) await closeServer(mockServer);
+  });
+
+  async function setupWithCallbacks(
+    mockPort: number,
+    callbacks: {
+      onToolCall?: (r: ProxyToolCallRecord) => void;
+      onRequest?: (r: ProxyRequestRecord) => void;
+    },
+  ) {
+    manager = new ProxyManager({ port: 0, ...callbacks });
+    manager.registerUpstream({ name: 'test-mcp', url: `http://127.0.0.1:${mockPort}`, transportType: 'http' });
+    await manager.start();
+    const addr = (manager as unknown as { httpServer: { address: () => { port: number } } }).httpServer?.address();
+    proxyPort = typeof addr === 'object' && addr ? addr.port : 0;
+  }
+
+  it('emits ProxyToolCallRecord for tools/call', async () => {
+    ({ server: mockServer, port: proxyPort } = await createMockMcpServer((_rpc, _req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"ok"}]}}');
+    }));
+    const mockPort = proxyPort;
+
+    const records: ProxyToolCallRecord[] = [];
+    await setupWithCallbacks(mockPort, { onToolCall: (r) => records.push(r) });
+
+    await httpRequest(`http://127.0.0.1:${proxyPort}/proxy/test-mcp`, {
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: { name: 'read_file', arguments: { path: '/tmp/test' } },
+      }),
+      headers: { 'content-type': 'application/json' },
+    });
+
+    expect(records).toHaveLength(1);
+    const rec = records[0];
+    expect(rec.serverName).toBe('test-mcp');
+    expect(rec.toolName).toBe('read_file');
+    expect(rec.toolUseId).toBe('1');
+    expect(rec.success).toBe(true);
+    expect(rec.durationMs).toBeGreaterThan(0);
+    expect(rec.upstreamLatencyMs).toBeGreaterThan(0);
+    expect(rec.proxyOverheadMs).toBeDefined();
+    expect(typeof rec.proxyOverheadMs).toBe('number');
+    expect(rec.inputSizeBytes).toBeGreaterThan(0);
+    expect(rec.outputSizeBytes).toBeGreaterThan(0);
+    expect(rec.id).toBeTruthy();
+    expect(rec.timestamp).toBeGreaterThan(0);
+  });
+
+  it('emits ProxyRequestRecord for tools/list', async () => {
+    ({ server: mockServer, port: proxyPort } = await createMockMcpServer((_rpc, _req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}');
+    }));
+    const mockPort = proxyPort;
+
+    const records: ProxyRequestRecord[] = [];
+    await setupWithCallbacks(mockPort, { onRequest: (r) => records.push(r) });
+
+    await httpRequest(`http://127.0.0.1:${proxyPort}/proxy/test-mcp`, {
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+      headers: { 'content-type': 'application/json' },
+    });
+
+    expect(records).toHaveLength(1);
+    const rec = records[0];
+    expect(rec.serverName).toBe('test-mcp');
+    expect(rec.method).toBe('tools/list');
+    expect(rec.success).toBe(true);
+    expect(rec.durationMs).toBeGreaterThan(0);
+    expect(rec.upstreamLatencyMs).toBeGreaterThan(0);
+  });
+
+  it('does not emit records for non-tracked methods', async () => {
+    ({ server: mockServer, port: proxyPort } = await createMockMcpServer((_rpc, _req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"jsonrpc":"2.0","id":1,"result":{}}');
+    }));
+    const mockPort = proxyPort;
+
+    const toolRecords: ProxyToolCallRecord[] = [];
+    const reqRecords: ProxyRequestRecord[] = [];
+    await setupWithCallbacks(mockPort, {
+      onToolCall: (r) => toolRecords.push(r),
+      onRequest: (r) => reqRecords.push(r),
+    });
+
+    await httpRequest(`http://127.0.0.1:${proxyPort}/proxy/test-mcp`, {
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize' }),
+      headers: { 'content-type': 'application/json' },
+    });
+
+    expect(toolRecords).toHaveLength(0);
+    expect(reqRecords).toHaveLength(0);
+  });
+
+  it('records success=false for upstream error responses', async () => {
+    ({ server: mockServer, port: proxyPort } = await createMockMcpServer((_rpc, _req, res) => {
+      res.writeHead(500, { 'content-type': 'application/json' });
+      res.end('{"jsonrpc":"2.0","id":1,"error":{"code":-32603,"message":"fail"}}');
+    }));
+    const mockPort = proxyPort;
+
+    const records: ProxyToolCallRecord[] = [];
+    await setupWithCallbacks(mockPort, { onToolCall: (r) => records.push(r) });
+
+    await httpRequest(`http://127.0.0.1:${proxyPort}/proxy/test-mcp`, {
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'bad' } }),
+      headers: { 'content-type': 'application/json' },
+    });
+
+    expect(records).toHaveLength(1);
+    expect(records[0].success).toBe(false);
+  });
+
+  it('computes proxyOverheadMs as totalDuration - upstreamLatency', async () => {
+    ({ server: mockServer, port: proxyPort } = await createMockMcpServer((_rpc, _req, res) => {
+      // Small delay to ensure measurable upstream latency
+      setTimeout(() => {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end('{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}');
+      }, 5);
+    }));
+    const mockPort = proxyPort;
+
+    const records: ProxyRequestRecord[] = [];
+    await setupWithCallbacks(mockPort, { onRequest: (r) => records.push(r) });
+
+    await httpRequest(`http://127.0.0.1:${proxyPort}/proxy/test-mcp`, {
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+      headers: { 'content-type': 'application/json' },
+    });
+
+    expect(records).toHaveLength(1);
+    const rec = records[0];
+    // proxyOverheadMs = durationMs - upstreamLatencyMs
+    const expected = rec.durationMs - rec.upstreamLatencyMs;
+    expect(rec.proxyOverheadMs).toBeCloseTo(expected, 1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Benchmark
+// ---------------------------------------------------------------------------
+
+describe('ProxyManager performance', () => {
+  let manager: ProxyManager;
+  let mockServer: Server;
+  let proxyPort: number;
+
+  afterEach(async () => {
+    if (manager) await manager.stop();
+    if (mockServer) await closeServer(mockServer);
+  });
+
+  it('proxy overhead is <10ms p95 over 100 requests', async () => {
+    // Mock server that responds instantly
+    ({ server: mockServer, port: proxyPort } = await createMockMcpServer((_rpc, _req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"jsonrpc":"2.0","id":1,"result":{"ok":true}}');
+    }));
+    const mockPort = proxyPort;
+
+    const overheads: number[] = [];
+    manager = new ProxyManager({
+      port: 0,
+      onToolCall: (r) => {
+        if (r.proxyOverheadMs != null) overheads.push(r.proxyOverheadMs);
+      },
+    });
+    manager.registerUpstream({ name: 'bench', url: `http://127.0.0.1:${mockPort}`, transportType: 'http' });
+    await manager.start();
+    const addr = (manager as unknown as { httpServer: { address: () => { port: number } } }).httpServer?.address();
+    proxyPort = typeof addr === 'object' && addr ? addr.port : 0;
+
+    const body = JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: { name: 'fast_tool' },
+    });
+
+    // Warm up
+    for (let i = 0; i < 5; i++) {
+      await httpRequest(`http://127.0.0.1:${proxyPort}/proxy/bench`, {
+        body,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    overheads.length = 0;
+
+    // Measure
+    for (let i = 0; i < 100; i++) {
+      await httpRequest(`http://127.0.0.1:${proxyPort}/proxy/bench`, {
+        body,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+
+    overheads.sort((a, b) => a - b);
+    const p95 = overheads[Math.floor(overheads.length * 0.95)];
+    // Proxy overhead (JSON peek + record creation) should be well under 10ms
+    expect(p95).toBeLessThan(10);
+  }, 15_000);
+});
+
+// ---------------------------------------------------------------------------
+// Lifecycle
+// ---------------------------------------------------------------------------
+
+describe('ProxyManager lifecycle', () => {
+  it('start and stop without upstreams', async () => {
+    const manager = new ProxyManager({ port: 0 });
+    await manager.start();
+    await expect(manager.stop()).resolves.toBeUndefined();
+  });
+
+  it('stop is idempotent', async () => {
+    const manager = new ProxyManager({ port: 0 });
+    await manager.start();
+    await manager.stop();
+    await expect(manager.stop()).resolves.toBeUndefined();
+  });
+});

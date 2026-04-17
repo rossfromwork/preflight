@@ -25,6 +25,8 @@ const mockSendEvents = jest.fn<() => Promise<{ success: boolean; statusCode: num
   .mockResolvedValue({ success: true, statusCode: 200, retryCount: 0 });
 const mockSendMetrics = jest.fn<() => Promise<{ success: boolean; statusCode: number; retryCount: number }>>()
   .mockResolvedValue({ success: true, statusCode: 200, retryCount: 0 });
+const mockSendLogs = jest.fn<() => Promise<{ success: boolean; statusCode: number; retryCount: number }>>()
+  .mockResolvedValue({ success: true, statusCode: 200, retryCount: 0 });
 
 function makeIngestOptions(overrides?: Partial<NrIngestOptions>): NrIngestOptions {
   return {
@@ -37,6 +39,7 @@ function makeIngestOptions(overrides?: Partial<NrIngestOptions>): NrIngestOption
     metricHarvestIntervalMs: 100_000,
     sendEventsFn: mockSendEvents,
     sendMetricsFn: mockSendMetrics,
+    sendLogsFn: mockSendLogs,
     ...overrides,
   };
 }
@@ -47,6 +50,7 @@ beforeEach(() => {
   stderrSpy = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
   mockSendEvents.mockClear();
   mockSendMetrics.mockClear();
+  mockSendLogs.mockClear();
 });
 
 afterEach(() => {
@@ -177,12 +181,13 @@ describe('NrIngestManager', () => {
       manager.start();
       await manager.stop();
 
-      // Event was flushed
+      // Event was flushed (AiToolCall + AiAuditEvent per tool call)
       expect(mockSendEvents).toHaveBeenCalled();
       const sentEvents = (mockSendEvents.mock.calls[0] as unknown[])[0] as Array<Record<string, unknown>>;
-      expect(sentEvents).toHaveLength(1);
-      expect(sentEvents[0]!.tool).toBe('Edit');
-      expect(sentEvents[0]!.duration_ms).toBe(120);
+      expect(sentEvents).toHaveLength(2);
+      const toolCallEvent = sentEvents.find(e => e.eventType === 'AiToolCall')!;
+      expect(toolCallEvent.tool).toBe('Edit');
+      expect(toolCallEvent.duration_ms).toBe(120);
 
       // Metrics were flushed
       expect(mockSendMetrics).toHaveBeenCalled();
@@ -213,10 +218,12 @@ describe('NrIngestManager', () => {
 
       expect(mockSendEvents).toHaveBeenCalled();
       const sentEvents = (mockSendEvents.mock.calls[0] as unknown[])[0] as Array<Record<string, unknown>>;
-      expect(sentEvents).toHaveLength(2);
-      expect(sentEvents[0]!.eventType).toBe('AiToolCall');
-      expect(sentEvents[0]!.tool).toBe('Read');
-      expect(sentEvents[1]!.tool).toBe('Bash');
+      // 2 AiToolCall + 2 AiAuditEvent = 4 events
+      expect(sentEvents).toHaveLength(4);
+      const toolCallEvents = sentEvents.filter(e => e.eventType === 'AiToolCall');
+      expect(toolCallEvents).toHaveLength(2);
+      expect(toolCallEvents[0]!.tool).toBe('Read');
+      expect(toolCallEvents[1]!.tool).toBe('Bash');
 
       expect(mockSendMetrics).toHaveBeenCalled();
     });

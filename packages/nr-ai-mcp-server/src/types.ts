@@ -5,6 +5,7 @@ import type { TaskDetector } from './metrics/task-detector.js';
 import type { AntiPatternDetector } from './metrics/anti-patterns.js';
 import type { EfficiencyScorer } from './metrics/efficiency-score.js';
 import type { FeedbackCollector } from './tools/workflow-tools.js';
+import type { AuditTrailManager } from './security/index.js';
 
 export interface CliOptions {
   readonly port: number;
@@ -22,4 +23,5 @@ export interface ServerOptions {
   readonly antiPatternDetector?: AntiPatternDetector;
   readonly efficiencyScorer?: EfficiencyScorer;
   readonly feedbackCollector?: FeedbackCollector;
+  readonly auditTrailManager?: AuditTrailManager;
 }

@@ -168,7 +168,7 @@ describe('HarvestScheduler', () => {
     expect(sendEventsFn).toHaveBeenCalledTimes(1);
 
     // Verify warning was logged
-    const logOutput = stderrSpy.mock.calls.map((c) => c[0] as string).join('');
+    const logOutput = stderrSpy.mock.calls.map((c: unknown[]) => c[0] as string).join('');
     expect(logOutput).toContain('Failed to send events');
     expect(logOutput).toContain('droppedCount');
 

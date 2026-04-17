@@ -2,6 +2,8 @@
 import { Command } from 'commander';
 import { VERSION, createLogger } from '@nr-ai-observatory/shared';
 import { createServer } from './server.js';
+import { loadMcpConfig } from './config.js';
+import { ProxyManager } from './proxy/index.js';
 import type { CliOptions } from './types.js';
 
 export { VERSION };
@@ -11,6 +13,8 @@ export type { McpServerConfig } from './config.js';
 export { LocalStore } from './storage/index.js';
 export type { HookEvent, SessionSummary, AuditEntry } from './storage/index.js';
 export type { CliOptions, ServerOptions } from './types.js';
+export { ProxyManager } from './proxy/index.js';
+export type { ProxyToolCallRecord, ProxyRequestRecord, UpstreamConfig } from './proxy/index.js';
 
 const logger = createLogger('mcp-cli');
 
@@ -46,31 +50,72 @@ async function main(): Promise<void> {
     logLevel: options.logLevel,
   });
 
-  const server = createServer();
-
   if (options.stdio) {
+    const server = createServer();
     await server.connectStdio();
     logger.info('Server running on stdio transport');
+
+    const shutdown = async () => {
+      logger.info('Shutting down...');
+      await server.close();
+      process.exit(0);
+    };
+
+    // Exit when the client disconnects (closes the stdin pipe).
+    // StdioServerTransport doesn't listen for stdin 'end', so we handle it here.
+    process.stdin.on('end', () => {
+      logger.info('stdin closed, shutting down');
+      shutdown();
+    });
+
+    process.on('SIGINT', shutdown);
+    process.on('SIGTERM', shutdown);
   } else {
-    logger.error('HTTP transport not yet implemented. Use --stdio flag.');
-    process.exit(1);
+    // Proxy mode: start HTTP proxy server that forwards to upstream MCP servers
+    const config = loadMcpConfig(options);
+
+    if (config.proxyUpstreams.length === 0) {
+      logger.error(
+        'No proxy upstreams configured. Either use --stdio for direct MCP mode ' +
+        'or configure proxyUpstreams in the config file.',
+      );
+      process.exit(1);
+    }
+
+    const proxyManager = new ProxyManager({
+      port: config.port,
+      onToolCall: (record) => {
+        logger.debug('Proxy tool call', {
+          server: record.serverName,
+          tool: record.toolName,
+          durationMs: record.durationMs,
+        });
+      },
+      onRequest: (record) => {
+        logger.debug('Proxy request', {
+          server: record.serverName,
+          method: record.method,
+          durationMs: record.durationMs,
+        });
+      },
+    });
+
+    for (const upstream of config.proxyUpstreams) {
+      proxyManager.registerUpstream(upstream);
+    }
+
+    await proxyManager.start();
+    logger.info('Proxy server running', { port: config.port, upstreams: proxyManager.getUpstreamNames() });
+
+    const shutdown = async () => {
+      logger.info('Shutting down proxy...');
+      await proxyManager.stop();
+      process.exit(0);
+    };
+
+    process.on('SIGINT', shutdown);
+    process.on('SIGTERM', shutdown);
   }
-
-  const shutdown = async () => {
-    logger.info('Shutting down...');
-    await server.close();
-    process.exit(0);
-  };
-
-  // Exit when the client disconnects (closes the stdin pipe).
-  // StdioServerTransport doesn't listen for stdin 'end', so we handle it here.
-  process.stdin.on('end', () => {
-    logger.info('stdin closed, shutting down');
-    shutdown();
-  });
-
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
 }
 
 // Only run main() when executed directly (not when imported for testing).
