@@ -1,0 +1,322 @@
+# NR AI Observatory — Metrics Reference
+
+Every metric and event that this project sends to New Relic, organized by delivery API and source package.
+
+---
+
+## Delivery Mechanism
+
+All telemetry flows through the `HarvestScheduler` and `LogIngestManager`:
+
+| Channel | Target API | Flush Interval | Retry Buffer |
+|---------|-----------|----------------|--------------|
+| Events | NR Events API | 5 seconds | 1,000 events |
+| Metrics | NR Metric API | 60 seconds | 500 metrics |
+| Logs | NR Logs API | 5 seconds | 1,000 entries |
+
+Failed batches are re-queued with bounded buffers. Oldest entries are dropped on overflow.
+
+Source: `packages/shared/src/harvest/harvest-scheduler.ts`, `packages/nr-ai-mcp-server/src/transport/log-ingest.ts`
+
+---
+
+## Events API
+
+### MCP Server Events
+
+These events are emitted by the MCP server (`nr-ai-mcp-server`) when Claude Code or another IDE uses a tool.
+
+#### `AiToolCall`
+
+Emitted for every tool call captured by the hook collector.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `eventType` | string | Always `"AiToolCall"` |
+| `timestamp` | number | Unix epoch seconds |
+| `tool` | string | Tool name (e.g., `Read`, `Edit`, `Bash`, `Grep`) |
+| `tool_use_id` | string | Unique tool use identifier from the AI assistant |
+| `success` | boolean | Whether the tool call succeeded |
+| `developer` | string | Developer identifier |
+| `app_name` | string | Application name (default: `nr-ai-mcp-server`) |
+| `session_id` | string | Session identifier (if available) |
+| `platform` | string | Platform attribution (default: `claude-code`) |
+| `duration_ms` | number | Tool call duration in milliseconds (if available) |
+| `error_type` | string | Error classification (if failed) |
+| `error` | string | Error message (if failed) |
+| `input_size_bytes` | number | Size of tool input (if available) |
+| `output_size_bytes` | number | Size of tool output (if available) |
+| `input_hash` | string | Hash of tool input for deduplication (if available) |
+| `*` | varies | Tool-specific fields from input/output parsers (e.g., `filePath`, `command`, `exitCode`, `isTestCommand`) |
+
+Source: `packages/nr-ai-mcp-server/src/transport/nr-ingest.ts` — `toolCallToNrEvent()`
+
+#### `AiMcpToolCall`
+
+Emitted for proxied tool calls (when the server forwards to upstream MCP servers).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `eventType` | string | Always `"AiMcpToolCall"` |
+| `timestamp` | number | Unix epoch seconds |
+| `server` | string | Upstream server name |
+| `tool` | string | Tool name |
+| `duration_ms` | number | Total duration including proxy overhead |
+| `upstream_latency_ms` | number | Upstream server response time |
+| `success` | boolean | Whether the call succeeded |
+| `developer` | string | Developer identifier |
+| `app_name` | string | Application name |
+| `proxy_overhead_ms` | number | Time spent in proxy layer (if available) |
+| `error_type` | string | Error classification (if failed) |
+| `request_size_bytes` | number | Request payload size (if available) |
+| `response_size_bytes` | number | Response payload size (if available) |
+
+Source: `packages/nr-ai-mcp-server/src/transport/nr-ingest.ts` — `proxyToolCallToNrEvent()`
+
+#### `AiProxyRequest`
+
+Emitted for non-tool proxy requests (discovery methods like `tools/list`, `resources/list`).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `eventType` | string | Always `"AiProxyRequest"` |
+| `timestamp` | number | Unix epoch seconds |
+| `server` | string | Upstream server name |
+| `method` | string | MCP method name (e.g., `tools/list`) |
+| `duration_ms` | number | Total duration |
+| `upstream_latency_ms` | number | Upstream response time |
+| `success` | boolean | Whether the request succeeded |
+| `developer` | string | Developer identifier |
+| `app_name` | string | Application name |
+| `proxy_overhead_ms` | number | Proxy layer overhead (if available) |
+| `response_size_bytes` | number | Response size (if available) |
+
+Source: `packages/nr-ai-mcp-server/src/transport/nr-ingest.ts` — `proxyRequestToNrEvent()`
+
+#### `AiAuditEvent`
+
+Emitted for every tool call as a security audit record.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `eventType` | string | Always `"AiAuditEvent"` |
+| `timestamp` | number | Unix epoch seconds |
+| `action` | string | Audit action classification (e.g., `file_read`, `file_write`, `command_execute`) |
+| `tool` | string | Tool name |
+| `detail` | string | Human-readable description of the action |
+| `developer` | string | Developer identifier |
+| `session_id` | string | Session identifier (if available) |
+| `file_path` | string | File path involved (if applicable) |
+| `command` | string | Command executed (if applicable) |
+| `audit.security_alert` | boolean | Whether a security alert was triggered |
+| `audit.severity` | string | Alert severity: `critical`, `high`, or `medium` (if alert) |
+| `audit.alert_type` | string | Alert type: `destructive_command`, `sensitive_file`, or `external_network` (if alert) |
+
+Source: `packages/nr-ai-mcp-server/src/security/audit-trail.ts` — `auditRecordToNrEvent()`
+
+#### `SecurityAlert`
+
+Emitted only when a security alert is triggered (subset of audit events).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `eventType` | string | Always `"SecurityAlert"` |
+| `timestamp` | number | Unix epoch seconds |
+| `severity` | string | `critical`, `high`, or `medium` |
+| `alert_type` | string | `destructive_command`, `sensitive_file`, or `external_network` |
+| `description` | string | Human-readable alert description |
+| `tool` | string | Tool that triggered the alert |
+| `developer` | string | Developer identifier |
+| `session_id` | string | Session identifier (if available) |
+| `file_path` | string | File path (if sensitive file alert) |
+| `command` | string | Command (if destructive command alert) |
+
+Security alert triggers:
+- **`destructive_command`** (critical): `rm -rf`, `git push --force`, `DROP TABLE`, pipe-to-shell patterns
+- **`sensitive_file`** (high): `.env`, `.pem`, `.key`, `credentials`, `secret`, `.ssh`, `.npmrc`, `.pypirc`, `password`, `token` (path-boundary anchored)
+- **`external_network`** (medium): `curl`, `wget`, `nc`, `ssh` commands
+
+Source: `packages/nr-ai-mcp-server/src/security/audit-trail.ts` — `securityAlertToNrEvent()`
+
+---
+
+### SDK Agent Events
+
+These events are emitted by the SDK agent (`nr-ai-agent`) when application code uses wrapped Anthropic or Gemini clients.
+
+#### `AiRequest`
+
+Emitted for every AI model request.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `eventType` | string | Always `"AiRequest"` |
+| `id` | string | Unique request identifier |
+| `timestamp` | number | Unix epoch seconds |
+| `provider` | string | `anthropic` or `google` |
+| `model` | string | Model identifier (e.g., `claude-sonnet-4-20250514`) |
+| `requestMethod` | string | SDK method: `messages.create`, `messages.stream`, `models.generateContent`, `models.generateContentStream`, or `models.embedContent` |
+| `messageCount` | number | Number of messages in the request |
+| `toolCount` | number | Number of tools provided |
+| `thinkingEnabled` | boolean | Whether extended thinking is enabled |
+| `streamingEnabled` | boolean | Whether streaming is used |
+| `nr.appName` | string | Application name |
+| `maxTokens` | number | Max tokens parameter (if set) |
+| `temperature` | number | Temperature parameter (if set) |
+| `topP` | number | Top-p parameter (if set) |
+| `systemPromptLength` | number | Length of system prompt (if present) |
+| `toolNames` | string | Comma-separated tool names (if tools provided) |
+| `thinkingBudgetTokens` | number | Thinking budget (if set) |
+| `nr.entityGuid` | string | Entity GUID (if set) |
+| `custom.*` | varies | Custom attributes prefixed with `custom.` |
+
+Source: `packages/shared/src/events/serialize.ts` — `aiRequestToNrEvent()`
+
+#### `AiResponse`
+
+Emitted for every AI model response.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `eventType` | string | Always `"AiResponse"` |
+| `id` | string | Request identifier (matches the `AiRequest.id`) |
+| `timestamp` | number | Unix epoch seconds |
+| `provider` | string | `anthropic` or `google` |
+| `model` | string | Model identifier |
+| `durationMs` | number | Request-to-response duration |
+| `inputTokens` | number | Input/prompt token count |
+| `outputTokens` | number | Output/completion token count |
+| `thinkingTokens` | number | Extended thinking token count |
+| `cacheReadTokens` | number | Prompt cache read tokens |
+| `cacheCreationTokens` | number | Prompt cache creation tokens |
+| `totalTokens` | number | `inputTokens + outputTokens + thinkingTokens` |
+| `nr.appName` | string | Application name |
+| `timeToFirstTokenMs` | number | Time to first token (streaming only, if available) |
+| `tokensPerSecond` | number | `(outputTokens / durationMs) * 1000` (if both > 0) |
+| `stopReason` | string | Why generation stopped (e.g., `end_turn`, `max_tokens`) |
+| `contentBlockTypes` | string | Comma-separated content block types |
+| `cost.inputUsd` | number | Input token cost in USD |
+| `cost.outputUsd` | number | Output token cost in USD |
+| `cost.thinkingUsd` | number | Thinking token cost in USD |
+| `cost.cacheReadUsd` | number | Cache read token cost in USD |
+| `cost.cacheCreationUsd` | number | Cache creation token cost in USD |
+| `cost.totalUsd` | number | Total cost in USD |
+| `error.type` | string | Error type (if failed) |
+| `error.message` | string | Error message (if failed) |
+| `error.statusCode` | number | HTTP status code (if failed) |
+| `custom.*` | varies | Custom attributes prefixed with `custom.` |
+
+Source: `packages/shared/src/events/serialize.ts` — `aiResponseToNrEvent()`
+
+#### `AiMessage`
+
+Emitted for message content capture (when `recordContent` is enabled).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `eventType` | string | Always `"AiMessage"` |
+| `id` | string | Message identifier |
+| `timestamp` | number | Unix epoch seconds |
+| `role` | string | Message role (`user`, `assistant`, `system`) |
+| `content` | string | Message content (may be truncated) |
+| `contentLength` | number | Original content length |
+| `sequence` | number | Message sequence number |
+| `nr.appName` | string | Application name |
+| `custom.*` | varies | Custom attributes prefixed with `custom.` |
+
+Source: `packages/shared/src/events/serialize.ts` — `aiMessageToNrEvent()`
+
+---
+
+## Metric API
+
+### MCP Server — Per-Call Metrics
+
+Recorded for each tool call as it happens.
+
+| Metric Name | Value | Attributes | How Computed |
+|-------------|-------|------------|--------------|
+| `ai.tool.call_count` | `1` | `{tool}` | Incremented once per tool call |
+| `ai.tool.duration_ms` | duration | `{tool}` | From `ToolCallRecord.durationMs` |
+| `ai.tool.success` | `0` or `1` | `{tool}` | `record.success ? 1 : 0` |
+| `ai.mcp.proxy_request_count` | `1` | `{server, method}` | Incremented per proxy discovery request |
+| `ai.mcp.proxy_request_duration_ms` | duration | `{server}` | From `ProxyRequestRecord.durationMs` |
+
+Source: `packages/nr-ai-mcp-server/src/transport/nr-ingest.ts` — `ingestToolCall()`, `ingestProxyRequest()`
+
+### MCP Server — Session Gauges
+
+Emitted every 60 seconds (on the metric harvest cadence) with current session state.
+
+| Metric Name | Value | Attributes | How Computed |
+|-------------|-------|------------|--------------|
+| `ai.session.duration_ms` | duration | — | `SessionTracker.getMetrics().sessionDurationMs` |
+| `ai.session.unique_files_read` | count | — | Size of internal Set of file paths from Read calls |
+| `ai.session.unique_files_written` | count | — | Size of internal Set of file paths from Write/Edit calls |
+
+Source: `packages/nr-ai-mcp-server/src/transport/nr-ingest.ts` — `emitSessionGauges()`
+
+### MCP Server — Proxy Gauges
+
+Emitted every 60 seconds alongside session gauges (only when proxy mode is active).
+
+| Metric Name | Value | Attributes | How Computed |
+|-------------|-------|------------|--------------|
+| `ai.mcp.server_call_count` | count | `{server}` | Per-server total call count from `ProxyMetricsTracker` |
+| `ai.mcp.server_latency_ms` | average ms | `{server}` | `sum(latencies) / count` per server |
+| `ai.mcp.server_error_rate` | ratio (0-1) | `{server}` | `failedCount / totalCount` per server |
+| `ai.mcp.proxy_overhead_ms` | average ms | — | `sum(overheadValues) / count` across all servers |
+| `ai.mcp.tool_popularity` | count | `{tool, server}` | Per-tool per-server call count |
+
+Source: `packages/nr-ai-mcp-server/src/transport/nr-ingest.ts` — `emitSessionGauges()`, `packages/nr-ai-mcp-server/src/metrics/proxy-metrics.ts`
+
+### SDK Agent — Request Metrics
+
+Recorded by `nr-ai-agent` for each wrapped SDK call.
+
+| Metric Name | Value | Attributes | How Computed |
+|-------------|-------|------------|--------------|
+| `ai.request.duration` | duration ms | `{provider, model}` | From `AiRequestRecord.durationMs` |
+| `ai.tokens.total` | token count | `{provider, model}` | From `AiRequestRecord.totalTokens` (only if > 0) |
+| `ai.error` | `1` | `{provider, model, errorType}` | Incremented when request has an error |
+| `ai.embedding.duration` | duration ms | `{provider, model}` | From `AiEmbeddingRecord.durationMs` (embeddings only) |
+
+Source: `packages/nr-ai-agent/src/agent.ts` — `ingestRequestRecord()`, `ingestEmbeddingRecord()`
+
+### Metric Aggregation
+
+All metrics pass through the `MetricAggregator` before being sent. For each unique (name + attributes) combination, the aggregator computes:
+
+| Derived Metric | NR Name | Type | How Computed |
+|----------------|---------|------|--------------|
+| Count | `{name}.count` | count | Number of `record()` calls |
+| Sum | `{name}.sum` | count | Sum of all values |
+| Min | `{name}.min` | gauge | Minimum value |
+| Max | `{name}.max` | gauge | Maximum value |
+
+Source: `packages/shared/src/harvest/metric-aggregator.ts`
+
+---
+
+## Logs API
+
+### Audit Log Entries
+
+Every tool call produces a structured log entry sent to the NR Logs API.
+
+| Field | Location | Type | Description |
+|-------|----------|------|-------------|
+| `timestamp` | top-level | number | Epoch milliseconds |
+| `message` | top-level | string | Human-readable audit detail |
+| `tool` | attributes | string | Tool name |
+| `developer` | attributes | string | Developer identifier |
+| `app_name` | attributes | string | Application name |
+| `session_id` | attributes | string | Session identifier (if available) |
+| `audit.action` | attributes | string | Action classification |
+| `audit.security_alert` | attributes | boolean | Whether a security alert was triggered |
+| `audit.file_path` | attributes | string | File path (if applicable) |
+| `audit.command` | attributes | string | Command (if applicable) |
+| `audit.severity` | attributes | string | Alert severity (if alert) |
+| `audit.alert_type` | attributes | string | Alert type (if alert) |
+
+Source: `packages/nr-ai-mcp-server/src/transport/log-ingest.ts` — `auditRecordToLogEntry()`
