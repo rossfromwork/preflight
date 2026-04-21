@@ -69,15 +69,16 @@ describe('CollaborationProfiler', () => {
   // 1. High specificity + high autonomy
   // -------------------------------------------------------------------------
 
-  it('high toolCall/userMessage ratio + low corrections → high specificity + high autonomy', () => {
+  it('high toolCall/userMessage ratio + high toolCall/assistantMessage ratio → high specificity + high autonomy', () => {
     const profiler = new CollaborationProfiler({ sessionStore: store });
 
-    // 20 tool calls / 3 user messages = ratio 6.67, normalized: 6.67/10 ≈ 0.667
-    // 0 corrections / 3 messages → autonomy = 1 - 0/3 = 1.0
+    // specificity: 20 tool calls / 3 user messages = ratio 6.67, normalized: 6.67/10 ≈ 0.667
+    // autonomy: 20 tool calls / 4 assistant messages = 5.0, normalized: 5/5 = 1.0
     store.saveSession(makeSummary({
       sessionId: 's1',
       toolCallCount: 20,
       userMessages: 3,
+      assistantMessages: 4,
       userCorrections: 0,
     }));
 
@@ -162,69 +163,58 @@ describe('CollaborationProfiler', () => {
     const profiler = new CollaborationProfiler({ sessionStore: store });
 
     // Power User: high specificity (≥0.6) + high autonomy (≥0.6)
-    // specificity: toolCalls/userMessages/10 → need ratio ≥ 6 → e.g. 60 toolCalls / 1 userMessage
-    // autonomy: 1 - corrections/messages → need ≥ 0.6 → corrections/messages ≤ 0.4
+    // specificity: 60/10/10 = 0.6
+    // autonomy: 60 toolCalls / 10 assistantMessages / 5 = 1.0 (clamped)
     store.saveSession(makeSummary({
       sessionId: 'power',
       developer: 'power-user',
       toolCallCount: 60,
-      userMessages: 1,
+      userMessages: 10,
+      assistantMessages: 10,
       userCorrections: 0,
     }));
     expect(profiler.computeProfile('power-user').classification).toBe('Power User');
 
     // Delegator: low specificity (<0.6) + high autonomy (≥0.6)
-    // specificity: toolCalls/userMessages/10 < 0.6 → ratio < 6 → e.g. 5 toolCalls / 10 messages
-    // autonomy: 1 - corrections/messages ≥ 0.6 → corrections ≤ 0.4 * messages
+    // specificity: 15/10/10 = 0.15
+    // autonomy: 15 toolCalls / 5 assistantMessages / 5 = 0.6
     store.saveSession(makeSummary({
       sessionId: 'delegator',
       developer: 'delegator-user',
-      toolCallCount: 5,
+      toolCallCount: 15,
       userMessages: 10,
+      assistantMessages: 5,
       userCorrections: 1,
     }));
     expect(profiler.computeProfile('delegator-user').classification).toBe('Delegator');
 
-    // Learning: low specificity (<0.6) + correctionRate < 0.6 (i.e., corrections/messages > 0.4)
-    // specificity: toolCalls/userMessages/10 < 0.6
-    // correctionRate: 1 - corrections/messages < 0.6 → corrections/messages > 0.4
+    // Learning: low specificity (<0.6) + correctionRate < 0.6
+    // specificity: 5/10/10 = 0.05
+    // correctionRate: 1 - 8/10 = 0.2
+    // autonomy: 5/10/5 = 0.1 (doesn't matter, Learning is checked before Collaborative)
     store.saveSession(makeSummary({
       sessionId: 'learning',
       developer: 'learning-user',
       toolCallCount: 5,
       userMessages: 10,
+      assistantMessages: 10,
       userCorrections: 8,
     }));
     expect(profiler.computeProfile('learning-user').classification).toBe('Learning');
 
-    // Collaborative: moderate everything (doesn't match other categories)
-    // specificity < 0.6, autonomy < 0.6, correctionRate ≥ 0.6
+    // Collaborative: low specificity + low autonomy + correctionRate ≥ 0.6
+    // specificity: 5/10/10 = 0.05 (<0.6)
+    // autonomy: 5 toolCalls / 10 assistantMessages / 5 = 0.1 (<0.6)
+    // correctionRate: 1 - 1/10 = 0.9 (≥0.6) — few corrections but low autonomy
     store.saveSession(makeSummary({
       sessionId: 'collab',
       developer: 'collab-user',
       toolCallCount: 5,
       userMessages: 10,
-      userCorrections: 4,
+      assistantMessages: 10,
+      userCorrections: 1,
     }));
-    // specificity: 5/10/10 = 0.05 (<0.6) ✓
-    // autonomy: 1 - 4/10 = 0.6 (≥0.6) → actually this would be Delegator
-    // Need autonomy < 0.6: corrections/messages > 0.4 → need 5+ corrections
-    // But also correctionRate ≥ 0.6: 1 - corrections/messages ≥ 0.6 → corrections ≤ 4
-    // Contradiction: we need autonomy < 0.6 AND correctionRate ≥ 0.6 but they compute identically
-    // Actually looking at classify(): Collaborative = specificity < 0.6 AND autonomy < 0.6 AND correctionRate >= 0.6
-    // Since autonomy and correctionRate use same formula, autonomy < 0.6 implies correctionRate < 0.6
-    // So Collaborative catches: specificity ≥ 0.6 AND autonomy < 0.6
-    store.saveSession(makeSummary({
-      sessionId: 'collab2',
-      developer: 'collab-user2',
-      toolCallCount: 60,
-      userMessages: 10,
-      userCorrections: 5,
-    }));
-    // specificity: 60/10/10 = 0.6 (≥0.6) ✓
-    // autonomy: 1 - 5/10 = 0.5 (<0.6) → not Power User
-    // Falls through to Collaborative
-    expect(profiler.computeProfile('collab-user2').classification).toBe('Collaborative');
+    expect(profiler.computeProfile('collab-user').classification).toBe('Collaborative');
   });
 
   // -------------------------------------------------------------------------
@@ -234,30 +224,33 @@ describe('CollaborationProfiler', () => {
   it('computeTeamBaseline averages across 3 developers correctly', () => {
     const profiler = new CollaborationProfiler({ sessionStore: store });
 
-    // Alice: specificity = 60/10/10 = 0.6
+    // Alice: specificity = 60/10/10 = 0.6, autonomy = 60/10/5 = 1.0 (clamped)
     store.saveSession(makeSummary({
       sessionId: 'a1',
       developer: 'alice',
       toolCallCount: 60,
       userMessages: 10,
+      assistantMessages: 10,
       userCorrections: 0,
     }));
 
-    // Bob: specificity = 30/10/10 = 0.3
+    // Bob: specificity = 30/10/10 = 0.3, autonomy = 30/10/5 = 0.6
     store.saveSession(makeSummary({
       sessionId: 'b1',
       developer: 'bob',
       toolCallCount: 30,
       userMessages: 10,
+      assistantMessages: 10,
       userCorrections: 0,
     }));
 
-    // Charlie: specificity = 90/10/10 = 0.9
+    // Charlie: specificity = 90/10/10 = 0.9, autonomy = 90/10/5 = 1.0 (clamped)
     store.saveSession(makeSummary({
       sessionId: 'c1',
       developer: 'charlie',
       toolCallCount: 90,
       userMessages: 10,
+      assistantMessages: 10,
       userCorrections: 0,
     }));
 
@@ -267,8 +260,8 @@ describe('CollaborationProfiler', () => {
     expect(baseline.sessionCount).toBe(3);
     // Team specificity: (0.6 + 0.3 + 0.9) / 3 = 0.6
     expect(baseline.dimensions.specificity).toBe(0.6);
-    // All have autonomy 1.0 → team autonomy = 1.0
-    expect(baseline.dimensions.autonomy).toBe(1);
+    // Team autonomy: (1.0 + 0.6 + 1.0) / 3 ≈ 0.867
+    expect(baseline.dimensions.autonomy).toBeCloseTo(0.867, 2);
   });
 
   // -------------------------------------------------------------------------
@@ -278,21 +271,23 @@ describe('CollaborationProfiler', () => {
   it('compareToTeam produces correct delta values for each dimension', () => {
     const profiler = new CollaborationProfiler({ sessionStore: store });
 
-    // Alice: specificity = 60/10/10 = 0.6, autonomy = 1 - 0/10 = 1.0
+    // Alice: specificity = 60/10/10 = 0.6, autonomy = 60/5/5 = 1.0 (clamped)
     store.saveSession(makeSummary({
       sessionId: 'a1',
       developer: 'alice',
       toolCallCount: 60,
       userMessages: 10,
+      assistantMessages: 5,
       userCorrections: 0,
     }));
 
-    // Bob: specificity = 30/10/10 = 0.3, autonomy = 1 - 5/10 = 0.5
+    // Bob: specificity = 30/10/10 = 0.3, autonomy = 30/10/5 = 0.6
     store.saveSession(makeSummary({
       sessionId: 'b1',
       developer: 'bob',
       toolCallCount: 30,
       userMessages: 10,
+      assistantMessages: 10,
       userCorrections: 5,
     }));
 
@@ -304,10 +299,10 @@ describe('CollaborationProfiler', () => {
     expect(comparison.teamDimensions.specificity).toBe(0.45);
     expect(comparison.deltas.specificity).toBe(0.15);
 
-    // Alice autonomy: 1.0, team avg: (1.0 + 0.5)/2 = 0.75
+    // Alice autonomy: 1.0, Bob autonomy: 0.6, team avg: (1.0 + 0.6)/2 = 0.8
     expect(comparison.developerDimensions.autonomy).toBe(1);
-    expect(comparison.teamDimensions.autonomy).toBe(0.75);
-    expect(comparison.deltas.autonomy).toBe(0.25);
+    expect(comparison.teamDimensions.autonomy).toBe(0.8);
+    expect(comparison.deltas.autonomy).toBe(0.2);
   });
 
   // -------------------------------------------------------------------------
@@ -348,12 +343,15 @@ describe('CollaborationProfiler', () => {
   it('all dimensions clamp to [0, 1] with extreme values', () => {
     const profiler = new CollaborationProfiler({ sessionStore: store });
 
-    // Extreme values: 1000 tool calls / 1 message → ratio 1000, /10 = 100 → should clamp to 1
-    // 100 corrections / 1 message → autonomy = 1 - 100 = -99 → should clamp to 0
+    // Extreme values:
+    // specificity: 1000/1/10 = 100 → clamped to 1
+    // autonomy: 1000 toolCalls / 1 assistantMessage / 5 = 200 → clamped to 1
+    // correctionRate: 1 - 100/1 = -99 → clamped to 0
     store.saveSession(makeSummary({
       sessionId: 's-extreme',
       toolCallCount: 1000,
       userMessages: 1,
+      assistantMessages: 1,
       userCorrections: 100,
       filesRead: Array.from({ length: 100 }, (_, i) => `/f${i}.ts`),
       filesModified: Array.from({ length: 100 }, (_, i) => `/m${i}.ts`),
@@ -364,7 +362,7 @@ describe('CollaborationProfiler', () => {
     const profile = profiler.computeProfile('alice');
 
     expect(profile.dimensions.specificity).toBe(1);
-    expect(profile.dimensions.autonomy).toBe(0);
+    expect(profile.dimensions.autonomy).toBe(1);
     expect(profile.dimensions.correctionRate).toBe(0);
     expect(profile.dimensions.taskComplexity).toBe(1);
 
@@ -428,13 +426,14 @@ describe('CollaborationProfiler', () => {
   // 9. Neutral autonomy for zero-message sessions
   // -------------------------------------------------------------------------
 
-  it('returns 0.5 autonomy for sessions with zero user messages', () => {
+  it('returns 0.5 autonomy for sessions with zero assistant messages', () => {
     const profiler = new CollaborationProfiler({ sessionStore: store });
 
     store.saveSession(makeSummary({
       sessionId: 's1',
       toolCallCount: 50,
       userMessages: 0,
+      assistantMessages: 0,
       userCorrections: 0,
     }));
 

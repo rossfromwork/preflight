@@ -923,3 +923,472 @@ This is a lightweight guard that:
 
 1. `handleReportFeedback rejects invalid quality values` — call with `quality: 'excellent'`, verify `isError: true` in response.
 2. `handleReportFeedback accepts all valid quality values` — call with each of `'good'`, `'bad'`, `'neutral'`, verify each returns `recorded: true`.
+
+---
+---
+
+# Code Review — Round 2
+
+**Date:** 2026-04-21
+**Scope:** Full source review of `packages/nr-ai-mcp-server/src/` and `packages/shared/src/`
+**Method:** 6-agent parallel review covering metrics, transport/proxy, tools/server, shared package, platforms/storage/hooks, and cross-cutting concerns
+**Focus:** Real bugs affecting correctness, data integrity, and reliability — not already found in Round 1
+
+---
+
+## Summary
+
+| # | Severity | File | Issue |
+|---|----------|------|-------|
+| 13 | HIGH | shared/harvest-scheduler.ts | Events and metrics dropped on send failure — no re-queue |
+| 14 | HIGH | upstream-http.ts | SSE upstream connection leaks when client disconnects |
+| ✅ 15 | MEDIUM | collaboration-profile.ts | `autonomy` and `correctionRate` use identical formula — `Collaborative` classification unreachable |
+| ✅ 16 | MEDIUM | cost-tracker.ts | `reportCount` double-counts estimations |
+| ✅ 17 | MEDIUM | claudemd-tracker.ts | `contextTokensForClaudeMd` uses lines-added-in-edit instead of total file size |
+| ✅ 18 | MEDIUM | anti-patterns.ts | `flagged` map cleared/deleted too aggressively — already-detected patterns lost |
+| ✅ 19 | MEDIUM | shared/metric-aggregator.ts | `.count` and `.sum` metrics emitted as `gauge` instead of `count` type |
+| ✅ 20 | MEDIUM | cross-session-tools.ts | Invalid `since` date throws unhandled `RangeError` |
+| ✅ 21 | MEDIUM | cost-tools.ts | `by_model` attributes ALL session costs to the last-used model |
+| ✅ 22 | MEDIUM | workflow-tools.ts | Active task efficiency score permanently stale after first query |
+| ✅ 23 | MEDIUM | tool-parsers.ts | `output` parameter ignored — Bash `exitCode` never extracted (makes Round 1 fix #3 a no-op) |
+| ✅ 24 | MEDIUM | config.ts / index.ts | `config.enabled` is read but never checked — disable toggle non-functional |
+| ✅ 25 | MEDIUM | index.ts | Concurrent shutdown calls can cause incomplete final event flush |
+| ✅ 26 | MEDIUM | upstream-stdio.ts | Default case in `dispatchToClient` always fails with TypeError |
+| ✅ 27 | MEDIUM | proxy-manager.ts | `start()` hangs forever and crashes on port conflict |
+| ✅ 28 | MEDIUM | session-store.ts | `buildSessionSummary` drops the active task's data |
+| 29 | ✅ MEDIUM | audit-trail.ts | `/token/i` and `/password/i` regex match common source files — false positive alerts |
+| 30 | ✅ LOW | shared/metric-aggregator.ts | `sumOfSquares` tracked but never emitted |
+| 31 | ✅ LOW | shared/harvest-scheduler.ts | Scheduler's own SIGTERM handler races with main shutdown |
+| 32 | ✅ LOW | event-processor.ts | `durationMs` can be negative on clock adjustment |
+
+---
+
+## Critical / High Severity
+
+### ✅ 13. Data loss in HarvestScheduler on send failure (shared package)
+
+**File:** `packages/shared/src/harvest/harvest-scheduler.ts:127-167`
+
+The `harvestEvents()` method calls `this.eventBuffer.flush()` which atomically drains the buffer and returns the batch. If `sendEventsFn()` then fails (returns `{ success: false }` or throws), the batch is logged as "dropped" and permanently lost. The identical pattern exists in `harvestMetrics()` with `this.metricAggregator.harvest()`.
+
+This is the same data-loss pattern as Round 1 bug #1, which was found and fixed in `packages/nr-ai-mcp-server/src/transport/log-ingest.ts`. The shared `HarvestScheduler` was **not** fixed — it has the identical vulnerability.
+
+```typescript
+const batch = this.eventBuffer.flush();  // ← buffer drained
+const result = await this.sendEventsFn(batch, ...);
+if (!result.success) {
+  logger.warn('Failed to send events — batch dropped', { droppedCount: batch.length });
+  // batch is gone forever
+}
+```
+
+**Impact:** On any transient network failure or NR API outage, an entire harvest cycle's worth of `AiToolCall` events AND metric data are silently dropped. The `sendWithRetry` in `http-client.ts` does retry on 408/429/5xx, but if all retries fail, the batch is permanently lost. This is the primary data pipeline — all events and metrics flow through this class.
+
+**Fix:** Same approach as the Round 1 log-ingest fix — re-queue the batch on failure with a cap to prevent unbounded growth. Apply to both `harvestEvents()` and `harvestMetrics()`.
+
+---
+
+### ✅ 14. SSE upstream connection leaks when client disconnects
+
+**File:** `packages/nr-ai-mcp-server/src/proxy/upstream-http.ts:108-140`
+
+In the SSE streaming path, `upstreamRes.pipe(counter).pipe(res)` sets up a pipe chain. There is no handler for client disconnection (`res.on('close', ...)` is never registered). When the client closes the connection:
+
+1. `res` becomes a destroyed writable stream
+2. `counter` tries to write to the destroyed `res`, gets an error
+3. The `counter.on('error')` handler fires and destroys `res.socket` (already destroyed)
+4. But `upstreamRes` (the upstream HTTP connection) is never destroyed or unpiped
+5. The `forward()` promise waits for `upstreamRes.on('end')` or `upstreamRes.on('error')`, neither of which fires because the upstream is still sending data
+
+The `forward()` promise never resolves, and the upstream connection stays open until the upstream server closes it (which for SSE could be hours or never).
+
+**Impact:** Each client disconnect during SSE streaming leaks one upstream HTTP connection. Over time, this accumulates open sockets and unresolved promises. For long-running proxy instances, this leads to resource exhaustion.
+
+**Fix:** Add a `res.on('close', ...)` handler that destroys the upstream connection and resolves the promise:
+
+```typescript
+res.on('close', () => {
+  if (!upstreamRes.destroyed) {
+    upstreamRes.destroy();
+  }
+  resolve({
+    statusCode,
+    isStreaming: true,
+    responseSizeBytes: counter.bytes,
+    upstreamLatencyMs,
+  });
+});
+```
+
+---
+
+## Medium Severity
+
+### ✅ 15. `autonomy` and `correctionRate` use identical formula — `Collaborative` classification unreachable
+
+**File:** `src/metrics/collaboration-profile.ts:222-234, 265-272`
+
+`computeAutonomy(corrections, userMessages)` computes `1 - corrections / userMessages`. `computeCorrectionRate(corrections, userMessages)` computes `1 - corrections / userMessages`. Both receive the same inputs (`totalUserCorrections, totalUserMessages`) from `computeDimensions` at lines 202-203. Therefore `autonomy === correctionRate` always when `userMessages > 0`.
+
+In `classify()` (line 265-272):
+- Case 2 (`Delegator`): `specificity < 0.6 && autonomy >= 0.6`
+- Case 3 (`Learning`): `specificity < 0.6 && correctionRate < 0.6`
+- Case 4 (`Collaborative`): default/else
+
+Since `autonomy === correctionRate`, once case 2 fails (autonomy < 0.6), case 3's `correctionRate < 0.6` is always true. The `Collaborative` classification is unreachable.
+
+**Impact:** Developers who should be classified as `Collaborative` are classified as `Learning`. This affects the collaboration profile output and NR events. The `autonomy` dimension was likely intended to measure something different from correction rate (e.g., ratio of questions asked to tool calls).
+
+**Fix:** Redesign `computeAutonomy` to measure a distinct dimension — e.g., based on `askedUserQuestions / toolCalls` (as done in `efficiency-score.ts:194-197`) rather than the correction ratio.
+
+---
+
+### ✅ 16. `reportCount` double-counts estimations in CostTracker
+
+**File:** `src/metrics/cost-tracker.ts:81-93`
+
+`recordEstimatedTokens()` increments `this.estimationCount` (line 91), then delegates to `this.recordTokenUsage()` (line 92), which increments `this.reportCount` (line 71). After N estimation calls: `reportCount = N` and `estimationCount = N`, suggesting N direct reports AND N estimations (2N total) when there were only N estimations.
+
+**Impact:** The `reportCount` and `estimationCount` fields in cost metrics (exposed via `nr_observe_get_cost_breakdown`) are misleading. The `ai.cost.report_count` metric emitted to NR is inflated.
+
+**Fix:** Don't increment `reportCount` in `recordTokenUsage` when called from `recordEstimatedTokens`, or change `reportCount` to mean "total reports including estimations" and document it accordingly.
+
+---
+
+### ✅ 17. `contextTokensForClaudeMd` severely underestimates token count for modifications
+
+**File:** `src/metrics/claudemd-tracker.ts:232-239`
+
+The context token estimate uses `latestChange.linesAdded * 40 * TOKENS_PER_CHAR` (i.e., `linesAdded * 10`). The `linesAdded` value represents lines added in that specific edit, not the total file size. For a modification that adds 3 lines to a 500-line CLAUDE.md, this estimates ~30 tokens when the actual context cost is the entire file (~5000 tokens).
+
+The class already has a correct `estimateContextCost()` static method (line 262-276) that reads the actual file and computes tokens from total character count, but `computeImpact()` doesn't use it.
+
+**Impact:** The `contextTokensForClaudeMd` field is wildly inaccurate (1-2 orders of magnitude low). The recommendation engine's "Large CLAUDE.md context cost" recommendation (3000-token threshold in `recommendation-engine.ts:291-299`) almost never triggers.
+
+**Fix:** Use `estimateContextCost()` or read the file's total size instead of `linesAdded`.
+
+---
+
+### ✅ 18. `flagged` map cleared/deleted too aggressively in blind editing detection
+
+**File:** `src/metrics/anti-patterns.ts:250-259`
+
+Two related bugs in `detectBlindEditing()`:
+
+**Bug A (line 251):** When a `Read` is detected for a file, `flagged.delete(file)` removes an already-confirmed detection. If file A was edited 5+ times (exceeding threshold, added to `flagged`), then a Read of file A occurs later, the confirmed pattern is erased. Only `editStreaks.delete(file)` (resetting the streak counter) is correct here.
+
+**Bug B (line 259):** When a successful verification command runs, `flagged.clear()` wipes ALL already-detected patterns. Consider: Edit A 5 times (flagged), Edit B 5 times (flagged), then run a passing test — both detections are lost, function returns zero patterns.
+
+The `flagged` map should accumulate final results and never be cleared. Only `editStreaks` should be reset.
+
+**Impact:** False negatives in blind editing detection. Anti-pattern counts are understated, giving users an overly optimistic view of editing habits.
+
+**Fix:** Remove `flagged.delete(file)` on Read (line 251) and `flagged.clear()` on verification (line 259). Only clear/delete from `editStreaks`.
+
+---
+
+### ✅ 19. `.count` and `.sum` metrics emitted as `gauge` type instead of `count`
+
+**File:** `packages/shared/src/harvest/metric-aggregator.ts:59-70`
+
+The `harvest()` method emits all sub-metrics (`.count`, `.sum`, `.min`, `.max`) with `type: 'gauge'`. The `.count` and `.sum` sub-metrics are cumulative within an aggregation interval and should be `type: 'count'` for correct interpretation by the NR Metric API. Gauges represent point-in-time values — NR will average/latest them instead of summing across intervals.
+
+**Impact:** NRQL queries like `FROM Metric SELECT sum(ai.request.duration.count)` over time windows will not aggregate correctly. Rate calculations (`rate(sum(...), 1 minute)`) also produce incorrect results. The `.min` and `.max` sub-metrics ARE correctly typed as gauges.
+
+**Fix:** Use `type: 'count'` for the `.count` and `.sum` metrics:
+
+```typescript
+metrics.push({ ...base, type: 'count', name: `${bucket.name}.count`, value: bucket.count });
+metrics.push({ ...base, type: 'count', name: `${bucket.name}.sum`, value: bucket.sum });
+metrics.push({ ...base, name: `${bucket.name}.min`, value: bucket.min });
+metrics.push({ ...base, name: `${bucket.name}.max`, value: bucket.max });
+```
+
+---
+
+### ✅ 20. Invalid `since` date throws unhandled `RangeError` in session history
+
+**File:** `src/tools/cross-session-tools.ts:201`
+
+`handleGetSessionHistory` creates a `Date` from the user-provided `since` string without validation. `new Date("not-a-date")` produces an Invalid Date, which propagates to `sessionStore.loadAllSessions()` → `formatDate()` → `date.toISOString()`, which throws `RangeError: Invalid time value`.
+
+Note: `handleGetCostPerOutcome` (line 372) correctly handles this case with `isNaN(sinceMs)` — this handler was missed.
+
+**Impact:** Confusing opaque error message instead of a clear "invalid date" response. Does not crash the server (MCP SDK catches it).
+
+**Fix:** Validate the date before use:
+
+```typescript
+const since = args.since ? new Date(args.since) : undefined;
+if (since && isNaN(since.getTime())) {
+  return { content: [{ type: 'text', text: JSON.stringify({ error: 'Invalid since date' }) }], isError: true };
+}
+```
+
+---
+
+### ✅ 21. `by_model` cost breakdown attributes ALL session costs to the last-used model
+
+**File:** `src/tools/cost-tools.ts:118-121`
+
+`handleGetCostBreakdown` builds a `byModel` object by assigning the **entire** `sessionTotalCostUsd` to `metrics.model` (the most recently used model). If a user switches models during a session (e.g., Sonnet for some work, Opus for other work), `by_model` will have a single entry attributing all costs to the last model.
+
+```typescript
+const byModel: Record<string, number> = {};
+if (metrics.model && metrics.sessionTotalCostUsd !== null) {
+  byModel[metrics.model] = metrics.sessionTotalCostUsd;  // ← all costs to last model
+}
+```
+
+**Impact:** Wrong cost attribution data. Users comparing model costs get incorrect numbers. The `total_usd` field is correct; only the `by_model` breakdown is wrong.
+
+**Fix:** Track per-model cost accumulation in `CostTracker` (e.g., a `Map<string, number>` incremented in `recordTokenUsage`), and expose it in `getMetrics()`.
+
+---
+
+### ✅ 22. Active task efficiency score permanently stale after first query
+
+**File:** `src/tools/workflow-tools.ts:249-260`
+
+`handleGetEfficiencyScore` scores unscored tasks by checking `scoredIds.has(task.taskId)`. The first time this tool is called while a task is active, the active task gets scored and its `taskId` added to `scoredIds`. On subsequent calls, the same `taskId` is already in `scoredIds` — it's skipped even though the task now has more tool calls and different metrics.
+
+**Impact:** If a user calls `nr_observe_get_efficiency_score` early in a task (e.g., after 5 tool calls), the score is locked in. Calling it again after 50 more tool calls returns the same stale score. The `session_average` is also affected.
+
+**Fix:** For active tasks, always recompute the score (replace the stale entry). Only use `scoredIds` caching for completed/immutable tasks.
+
+---
+
+### ✅ 23. `parseToolSpecificFields` ignores `output` parameter — Bash `exitCode` never extracted
+
+**File:** `src/hooks/tool-parsers.ts:154-172`
+
+`parseToolSpecificFields(toolName, input, output)` accepts an `output` parameter but never uses it. The function body only runs `INPUT_PARSERS[toolName]` — there are no output parsers. For Bash commands, the `tool_response` from Claude Code's hook contains the exit code, but since the output is never parsed, the `exitCode` field is never set on `ToolCallRecord`.
+
+**Impact:** This makes the Round 1 fix #3 (populate `bashExitCodes` in `session-tracker.ts`) a **no-op** — the reading code is there but no data ever arrives through the hook pipeline. The `bashExitCodes` map remains empty in production. The workflow trace also never shows exit codes.
+
+**Fix:** Add an `OUTPUT_PARSERS` map with a Bash output parser that extracts `exitCode` from the tool response:
+
+```typescript
+const OUTPUT_PARSERS: Record<string, (output: Record<string, unknown>) => ToolFields> = {
+  Bash: (output) => {
+    const fields: ToolFields = {};
+    if (typeof output.exitCode === 'number') {
+      fields.exitCode = output.exitCode;
+    }
+    return fields;
+  },
+};
+```
+
+And call it in `parseToolSpecificFields`:
+
+```typescript
+const outputParser = OUTPUT_PARSERS[toolName];
+if (outputParser && output !== null && output !== undefined && typeof output === 'object') {
+  Object.assign(fields, outputParser(output as Record<string, unknown>));
+}
+```
+
+---
+
+### ✅ 24. `config.enabled` is read but never checked — disable toggle non-functional
+
+**Files:** `src/config.ts:152-153`, `src/index.ts`
+
+`config.enabled` is loaded from the `NEW_RELIC_AI_MCP_ENABLED` env var (line 153) and stored in the frozen config object. It's even logged in debug output. But no code path in `index.ts` or anywhere else ever checks `config.enabled`. The server starts, registers hooks, ingests events, and sends data to NR regardless.
+
+**Impact:** Users who set `NEW_RELIC_AI_MCP_ENABLED=false` expecting to disable the server find it running normally. The documented configuration option is non-functional.
+
+**Fix:** Add an early exit in `main()` in `index.ts`:
+
+```typescript
+if (!config.enabled) {
+  logger.info('Server disabled via config — exiting');
+  process.exit(0);
+}
+```
+
+---
+
+### ✅ 25. Concurrent shutdown calls can cause incomplete final event flush
+
+**File:** `src/index.ts:182-196`
+
+The `shutdown` function is registered with `process.on('SIGINT', shutdown)`, `process.on('SIGTERM', shutdown)`, AND `process.stdin.on('end', ...)`. All three use `process.on` (not `once`), so:
+
+1. The same signal can trigger `shutdown` twice (SIGINT sent twice rapidly)
+2. `stdin` closing and a signal can arrive simultaneously (common when the parent process dies)
+3. The `stdin.on('end')` callback calls `shutdown()` without `await`, so the promise floats
+
+When two concurrent `shutdown()` calls race, both call `await nrIngest.stop()` then `process.exit(0)`. The first call to reach `process.exit(0)` kills the process before the other call's final flush completes.
+
+**Impact:** The final event batch and metric harvest may be dropped on shutdown. The window is small but the scenario (stdin close + SIGTERM) is common when Claude Code terminates.
+
+**Fix:** Add a guard:
+
+```typescript
+let shuttingDown = false;
+const shutdown = async () => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  // ... rest of shutdown
+};
+```
+
+---
+
+### ✅ 26. Default case in `dispatchToClient` always fails with TypeError
+
+**File:** `src/proxy/upstream-stdio.ts:209-214`
+
+The `default` case calls `client.request()` with `{} as Parameters<typeof client.request>[1]` as the result schema. At runtime, the MCP SDK calls `safeParse({}, response.result)`, which tries `{}.safeParse(data)` — since a plain object has no `safeParse` method, this throws `TypeError: v3Schema.safeParse is not a function`.
+
+```typescript
+default:
+  return client.request(
+    { method: rpc.method, params } as Parameters<typeof client.request>[0],
+    {} as Parameters<typeof client.request>[1],  // ← always throws TypeError
+  );
+```
+
+**Impact:** Any MCP method not explicitly handled (e.g., `prompts/list`, `prompts/get`, `completions/complete`, or custom methods) always fails with an opaque error, even if the upstream processes the request successfully. Breaks the proxy's transparent passthrough contract.
+
+**Fix:** Use `z.any()` from Zod as the result schema for unknown methods:
+
+```typescript
+import { z } from 'zod';
+// ...
+default:
+  return client.request(
+    { method: rpc.method, params } as Parameters<typeof client.request>[0],
+    z.any(),
+  );
+```
+
+---
+
+### ✅ 27. `ProxyManager.start()` hangs forever and crashes on port conflict
+
+**File:** `src/proxy/proxy-manager.ts:120-125`
+
+`start()` wraps `server.listen()` in a `new Promise((resolve) => { ... })` with no `reject` call and no `'error'` event handler on the HTTP server. When `listen()` fails (e.g., `EADDRINUSE`):
+
+1. The callback is never invoked → `resolve()` never called → promise hangs forever
+2. The server emits an unhandled `'error'` event → Node.js throws an uncaught exception → process crashes
+
+```typescript
+return new Promise((resolve) => {
+  this.httpServer!.listen(this.port, '127.0.0.1', () => {
+    resolve();   // ← only called on success
+  });
+  // ← no error handler
+});
+```
+
+**Impact:** Process crash on port conflict. Easy to trigger when running multiple instances during development.
+
+**Fix:** Add an error handler that rejects the promise:
+
+```typescript
+return new Promise<void>((resolve, reject) => {
+  this.httpServer!.once('error', reject);
+  this.httpServer!.listen(this.port, '127.0.0.1', () => {
+    resolve();
+  });
+});
+```
+
+---
+
+### ✅ 28. `buildSessionSummary` drops the active task's data
+
+**File:** `src/storage/session-store.ts:220-232`
+
+`buildSessionSummary` iterates only `taskMetrics.completedTasks` (line 221) and does not include the currently active task. When a session ends, the last task is typically still active (it hasn't been auto-completed). The active task's files, lines changed, tests run, builds run, and tool calls are all excluded from the summary.
+
+**Impact:** Session summaries systematically undercount metrics for the final task. For short sessions with only one task, the summary shows zero files, zero lines changed, zero tests. This affects weekly summaries, cross-session analytics, and the session history tool.
+
+**Fix:** Include the active task when building the summary:
+
+```typescript
+const allTasks = [...taskMetrics.completedTasks];
+const activeTasks = taskMetrics.activeTasks ?? [];
+allTasks.push(...activeTasks);
+for (const task of allTasks) { ... }
+```
+
+---
+
+### ✅ 29. `/token/i` and `/password/i` regex match common source files — false positive alerts
+
+**File:** `src/security/audit-trail.ts:67, 70`
+
+`DEFAULT_SENSITIVE_FILE_PATTERNS` includes `/password/i` (line 67) and `/token/i` (line 70) as bare substring matches without path-boundary anchors. These match any file path containing "password" or "token" anywhere: `src/utils/tokenizer.ts`, `src/auth/PasswordReset.tsx`, `src/services/token-refresh.ts`, etc.
+
+**Impact:** Every Read/Write/Edit of files with "token" or "password" in the path generates a `high` severity security alert. These pollute logs, inflate `securityAlerts` counts, and emit false `SecurityAlert` NR events.
+
+**Fix:** Add path-boundary anchors so these only match files likely to contain credentials:
+
+```typescript
+/(?:^|\/)password(?:s)?(?:\.[^/]*)?$/i,  // matches "password.txt", "passwords.json"
+/(?:^|\/)token(?:s)?(?:\.[^/]*)?$/i,     // matches "token.json", "tokens.yaml"
+```
+
+---
+
+## Low Severity
+
+### ✅ 30. `sumOfSquares` tracked in MetricAggregator but never emitted
+
+**File:** `packages/shared/src/harvest/metric-aggregator.ts:49, 59-70`
+
+`record()` accumulates `sumOfSquares` (line 49: `bucket.sumOfSquares += value * value`) but `harvest()` never includes it in the output metrics. The `MetricAccumulator` interface exports `sumOfSquares` as a public field, advertising a capability that doesn't reach NR.
+
+**Impact:** Wasted computation on every `record()` call. Any consumer expecting variance/stddev data from NR will find it missing. No current consumer appears to use it.
+
+**Fix:** Either emit it as an additional metric in `harvest()`, or remove the computation and the field from the interface to avoid confusion.
+
+---
+
+### ✅ 31. HarvestScheduler's own SIGTERM handler races with main shutdown
+
+**Files:** `packages/shared/src/harvest/harvest-scheduler.ts:62-67, 96-97`, `src/index.ts:182-196`
+
+The `HarvestScheduler` constructor creates a `boundSigterm` handler that calls `void this.stop()` (fire-and-forget). It registers this with `process.once('SIGTERM', ...)` at `start()`. Meanwhile, `index.ts` registers its own SIGTERM handler that calls `await nrIngest.stop()` → `await this.scheduler.stop()`.
+
+On SIGTERM:
+1. The scheduler's handler fires first and calls `void this.stop()` — sets `this.running = false`
+2. The `index.ts` handler calls `await scheduler.stop()` — sees `!this.running` and returns immediately, skipping final flush
+3. The first call's fire-and-forget stop may still be in-progress, but `index.ts` proceeds to `process.exit(0)`
+
+**Impact:** Only affects SIGTERM path. The scheduler's handler steals the `running` flag, causing the main shutdown's awaited `stop()` to short-circuit. Final harvest may not complete.
+
+**Fix:** Remove the scheduler's own SIGTERM handler (let the parent manage lifecycle), or make `stop()` idempotent by awaiting the first call's completion.
+
+---
+
+### ✅ 32. `durationMs` can be negative when system clock adjusts between hook invocations
+
+**File:** `src/hooks/event-processor.ts:176`
+
+Duration is computed as `event.timestamp - preEvent.timestamp`. Both timestamps come from `Date.now()` in separate process invocations (pre-hook and post-hook). If a system clock adjustment (NTP sync, DST, manual change) occurs between them, the post timestamp could be earlier, producing a negative `durationMs`.
+
+**Impact:** Negative durations propagate to NR metrics (`ai.tool.duration_ms`), efficiency score calculations, session stats averages, and anti-pattern detection. Rare in practice but corrupts metrics widely when it occurs.
+
+**Fix:** `Math.max(0, event.timestamp - preEvent.timestamp)`.
+
+---
+
+## Round 2 Recommendation
+
+**Before sharing (blockers):**
+- **#13** (HarvestScheduler data loss) — same class as Round 1 bug #1 but in the primary data pipeline. Every transient network failure drops an entire harvest batch of events and metrics.
+- **#23** (output parser missing) — makes the Round 1 fix #3 a no-op. `bashExitCodes` will always be empty.
+- **#14** (SSE connection leak) — only applies to proxy mode, but is unbounded resource growth.
+
+**Before production use:**
+- **#15** (identical formula), **#16** (double-count), **#17** (token underestimate), **#18** (false negatives), **#21** (wrong by_model), **#22** (stale score) — all produce incorrect data shown to users.
+- **#24** (enabled toggle), **#25** (shutdown race), **#26** (stdio default case), **#27** (port crash) — operational issues.
+- **#19** (metric type) — affects all NR metric queries using `sum()` or `rate()`.
+
+**Low priority:** #28-32 are real but unlikely to cause visible issues in a demo.

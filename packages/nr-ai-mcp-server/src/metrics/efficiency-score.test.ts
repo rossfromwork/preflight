@@ -423,6 +423,35 @@ describe('getScores() and reset()', () => {
 });
 
 // ---------------------------------------------------------------------------
+// updateScore
+// ---------------------------------------------------------------------------
+
+describe('updateScore()', () => {
+  it('replaces an existing score entry instead of duplicating it', () => {
+    const scorer = new EfficiencyScorer();
+
+    const task = makeTask({ taskId: 'active-1', linesChanged: 10, durationMs: 60_000 });
+    scorer.computeScore(task);
+    expect(scorer.getScores()).toHaveLength(1);
+
+    const updated = { ...task, linesChanged: 50, durationMs: 60_000 };
+    scorer.updateScore(updated);
+    expect(scorer.getScores()).toHaveLength(1);
+    expect(scorer.getScores()[0].components.speed).toBeCloseTo(0.833, 2);
+  });
+
+  it('appends a new entry when the taskId has not been scored before', () => {
+    const scorer = new EfficiencyScorer();
+
+    scorer.computeScore(makeTask({ taskId: 't1' }));
+    scorer.updateScore(makeTask({ taskId: 't2' }));
+
+    expect(scorer.getScores()).toHaveLength(2);
+    expect(scorer.getScores().map(s => s.taskId)).toEqual(['t1', 't2']);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Autonomy edge cases
 // ---------------------------------------------------------------------------
 

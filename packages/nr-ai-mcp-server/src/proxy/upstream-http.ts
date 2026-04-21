@@ -108,6 +108,18 @@ export class HttpUpstream implements ProxyUpstream {
           if (isStreaming) {
             // SSE: pipe chunk-by-chunk through ByteCountTransform
             const counter = new ByteCountTransform();
+            let sseResolved = false;
+
+            const resolveSSE = () => {
+              if (sseResolved) return;
+              sseResolved = true;
+              resolve({
+                statusCode,
+                isStreaming: true,
+                responseSizeBytes: counter.bytes,
+                upstreamLatencyMs,
+              });
+            };
 
             counter.on('error', (err) => {
               logger.error('Stream error in ByteCountTransform', { error: String(err) });
@@ -120,23 +132,18 @@ export class HttpUpstream implements ProxyUpstream {
               .pipe(counter)
               .pipe(res);
 
-            upstreamRes.on('end', () => {
-              resolve({
-                statusCode,
-                isStreaming: true,
-                responseSizeBytes: counter.bytes,
-                upstreamLatencyMs,
-              });
-            });
+            upstreamRes.on('end', resolveSSE);
 
             upstreamRes.on('error', (err) => {
               logger.error('Upstream SSE stream error', { error: String(err) });
-              resolve({
-                statusCode,
-                isStreaming: true,
-                responseSizeBytes: counter.bytes,
-                upstreamLatencyMs,
-              });
+              resolveSSE();
+            });
+
+            res.on('close', () => {
+              if (!upstreamRes.destroyed) {
+                upstreamRes.destroy();
+              }
+              resolveSSE();
             });
           } else {
             // Non-SSE: collect body, write to response

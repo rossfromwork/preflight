@@ -265,6 +265,32 @@ describe('parseToolSpecificFields', () => {
     });
   });
 
+  describe('Bash output parser', () => {
+    it('extracts exitCode from tool response', () => {
+      const input = { command: 'npm test' };
+      const output = { exitCode: 0, stdout: 'ok' };
+      const fields = parseToolSpecificFields('Bash', input, output);
+
+      expect(fields.exitCode).toBe(0);
+      expect(fields.command).toBe('npm test');
+    });
+
+    it('extracts non-zero exitCode', () => {
+      const fields = parseToolSpecificFields('Bash', { command: 'false' }, { exitCode: 1 });
+      expect(fields.exitCode).toBe(1);
+    });
+
+    it('does not set exitCode when output lacks it', () => {
+      const fields = parseToolSpecificFields('Bash', { command: 'ls' }, { stdout: 'files' });
+      expect(fields.exitCode).toBeUndefined();
+    });
+
+    it('does not set exitCode when output is null', () => {
+      const fields = parseToolSpecificFields('Bash', { command: 'ls' }, null);
+      expect(fields.exitCode).toBeUndefined();
+    });
+  });
+
   describe('unknown tools', () => {
     it('returns empty record for unknown tool name', () => {
       const fields = parseToolSpecificFields('SomeNewTool', { foo: 'bar' }, undefined);

@@ -89,6 +89,37 @@ describe('CostTracker', () => {
       expect(metrics.reportCount).toBe(2);
     });
 
+    it('tracks per-model cost breakdown across multiple models', () => {
+      const tracker = new CostTracker();
+
+      // Sonnet: 10k input ($0.03) + 2k output ($0.03) = $0.06
+      tracker.recordTokenUsage(
+        makeUsage({ inputTokens: 10_000, outputTokens: 2_000, totalTokens: 12_000 }),
+        'claude-sonnet-4',
+      );
+
+      // Opus: 10k input ($0.15) + 2k output ($0.15) = $0.30
+      // claude-opus-4: input=$15/MTok, output=$75/MTok
+      tracker.recordTokenUsage(
+        makeUsage({ inputTokens: 10_000, outputTokens: 2_000, totalTokens: 12_000 }),
+        'claude-opus-4',
+      );
+
+      // Another Sonnet report: same as first = $0.06
+      tracker.recordTokenUsage(
+        makeUsage({ inputTokens: 10_000, outputTokens: 2_000, totalTokens: 12_000 }),
+        'claude-sonnet-4',
+      );
+
+      const metrics = tracker.getMetrics();
+
+      expect(Object.keys(metrics.costByModel)).toHaveLength(2);
+      expect(metrics.costByModel['claude-sonnet-4']).toBeCloseTo(0.12, 4);
+      expect(metrics.costByModel['claude-opus-4']).toBeCloseTo(0.30, 4);
+      // Total should equal sum of models
+      expect(metrics.sessionTotalCostUsd).toBeCloseTo(0.42, 4);
+    });
+
     it('tracks thinking and cache tokens', () => {
       const tracker = new CostTracker();
 
@@ -150,7 +181,7 @@ describe('CostTracker', () => {
       const metrics = tracker.getMetrics();
       expect(metrics.totalInputTokens).toBe(1_000);
       expect(metrics.estimationCount).toBe(1);
-      expect(metrics.reportCount).toBe(1); // estimation calls recordTokenUsage internally
+      expect(metrics.reportCount).toBe(0);
     });
 
     it('estimates both input and output characters', () => {

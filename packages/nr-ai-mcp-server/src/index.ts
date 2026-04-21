@@ -100,6 +100,12 @@ async function main(): Promise<void> {
 
     const config = loadMcpConfig(options);
 
+    if (!config.enabled) {
+      logger.info('Server disabled via config — exiting');
+      await server.close();
+      process.exit(0);
+    }
+
     const localStore = new LocalStore(config.storagePath, config.hookBufferPath);
     localStore.initialize();
 
@@ -179,7 +185,10 @@ async function main(): Promise<void> {
     nrIngest.start();
     logger.info('Server running on stdio transport');
 
+    let shuttingDown = false;
     const shutdown = async () => {
+      if (shuttingDown) return;
+      shuttingDown = true;
       logger.info('Shutting down...');
       eventProcessor.stop();
       await nrIngest.stop();
@@ -189,7 +198,7 @@ async function main(): Promise<void> {
 
     process.stdin.on('end', () => {
       logger.info('stdin closed, shutting down');
-      shutdown();
+      void shutdown();
     });
 
     process.on('SIGINT', shutdown);
@@ -197,6 +206,11 @@ async function main(): Promise<void> {
   } else {
     // Proxy mode: start HTTP proxy server that forwards to upstream MCP servers
     const config = loadMcpConfig(options);
+
+    if (!config.enabled) {
+      logger.info('Server disabled via config — exiting');
+      process.exit(0);
+    }
 
     if (config.proxyUpstreams.length === 0) {
       logger.error(
@@ -231,7 +245,10 @@ async function main(): Promise<void> {
     await proxyManager.start();
     logger.info('Proxy server running', { port: config.port, upstreams: proxyManager.getUpstreamNames() });
 
+    let shuttingDown = false;
     const shutdown = async () => {
+      if (shuttingDown) return;
+      shuttingDown = true;
       logger.info('Shutting down proxy...');
       await proxyManager.stop();
       process.exit(0);

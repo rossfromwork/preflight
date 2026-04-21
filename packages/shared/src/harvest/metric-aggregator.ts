@@ -5,7 +5,6 @@ export interface MetricAccumulator {
   sum: number;
   min: number;
   max: number;
-  sumOfSquares: number;
 }
 
 interface Bucket extends MetricAccumulator {
@@ -37,7 +36,6 @@ export class MetricAggregator {
         sum: 0,
         min: Infinity,
         max: -Infinity,
-        sumOfSquares: 0,
       };
       this.buckets.set(key, bucket);
     }
@@ -46,7 +44,6 @@ export class MetricAggregator {
     bucket.sum += value;
     bucket.min = Math.min(bucket.min, value);
     bucket.max = Math.max(bucket.max, value);
-    bucket.sumOfSquares += value * value;
   }
 
   harvest(): NrMetric[] {
@@ -57,16 +54,12 @@ export class MetricAggregator {
     const timestamp = Date.now();
 
     for (const bucket of snapshot.values()) {
-      const base = {
-        type: 'gauge' as const,
-        timestamp,
-        attributes: bucket.attributes,
-      };
+      const baseAttrs = { timestamp, attributes: bucket.attributes };
 
-      metrics.push({ ...base, name: `${bucket.name}.count`, value: bucket.count });
-      metrics.push({ ...base, name: `${bucket.name}.sum`, value: bucket.sum });
-      metrics.push({ ...base, name: `${bucket.name}.min`, value: bucket.min });
-      metrics.push({ ...base, name: `${bucket.name}.max`, value: bucket.max });
+      metrics.push({ ...baseAttrs, type: 'count', name: `${bucket.name}.count`, value: bucket.count });
+      metrics.push({ ...baseAttrs, type: 'count', name: `${bucket.name}.sum`, value: bucket.sum });
+      metrics.push({ ...baseAttrs, type: 'gauge', name: `${bucket.name}.min`, value: bucket.min });
+      metrics.push({ ...baseAttrs, type: 'gauge', name: `${bucket.name}.max`, value: bucket.max });
     }
 
     return metrics;

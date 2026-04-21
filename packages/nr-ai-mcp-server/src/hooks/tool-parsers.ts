@@ -146,6 +146,16 @@ const INPUT_PARSERS: Record<string, (input: Record<string, unknown>) => ToolFiel
   TaskUpdate: parseTaskUpdate,
 };
 
+const OUTPUT_PARSERS: Record<string, (output: Record<string, unknown>) => ToolFields> = {
+  Bash: (output) => {
+    const fields: ToolFields = {};
+    if (typeof output.exitCode === 'number') {
+      fields.exitCode = output.exitCode;
+    }
+    return fields;
+  },
+};
+
 /**
  * Extract tool-specific structured fields from a tool's input and output.
  * Returns a flat record of fields to spread into the ToolCallRecord.
@@ -163,6 +173,12 @@ export function parseToolSpecificFields(
     const inputParser = INPUT_PARSERS[toolName];
     if (inputParser && input !== null && input !== undefined && typeof input === 'object') {
       Object.assign(fields, inputParser(input as Record<string, unknown>));
+    }
+
+    // Parse output fields
+    const outputParser = OUTPUT_PARSERS[toolName];
+    if (outputParser && output !== null && output !== undefined && typeof output === 'object') {
+      Object.assign(fields, outputParser(output as Record<string, unknown>));
     }
 
     return fields;

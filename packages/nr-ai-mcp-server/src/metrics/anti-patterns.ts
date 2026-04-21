@@ -248,7 +248,6 @@ export class AntiPatternDetector {
         const file = call.filePath as string | undefined;
         if (file) {
           editStreaks.delete(file);
-          flagged.delete(file);
         }
       } else if (
         call.toolName === 'Bash' &&
@@ -256,7 +255,6 @@ export class AntiPatternDetector {
       ) {
         if (call.success) {
           editStreaks.clear();
-          flagged.clear();
         }
       }
     }

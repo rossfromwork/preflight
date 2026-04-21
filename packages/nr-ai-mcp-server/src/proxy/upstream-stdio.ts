@@ -10,6 +10,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { performance } from 'node:perf_hooks';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { z } from 'zod';
 import { createLogger } from '@nr-ai-observatory/shared';
 import type { ForwardResult, ProxyUpstream, UpstreamConfig } from './types.js';
 
@@ -210,7 +211,7 @@ export class StdioUpstream implements ProxyUpstream {
         // Generic passthrough for any other JSON-RPC method
         return client.request(
           { method: rpc.method, params } as Parameters<typeof client.request>[0],
-          {} as Parameters<typeof client.request>[1],
+          z.any(),
         );
     }
   }

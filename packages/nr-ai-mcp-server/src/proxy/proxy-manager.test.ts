@@ -535,6 +535,26 @@ describe('ProxyManager performance', () => {
 // Lifecycle
 // ---------------------------------------------------------------------------
 
+describe('ProxyManager error handling', () => {
+  it('rejects with EADDRINUSE when port is already taken', async () => {
+    // Occupy a port
+    const blocker = createHttpServer();
+    const blockerPort = await new Promise<number>((resolve) => {
+      blocker.listen(0, '127.0.0.1', () => {
+        const addr = blocker.address();
+        resolve(typeof addr === 'object' && addr ? addr.port : 0);
+      });
+    });
+
+    try {
+      const manager = new ProxyManager({ port: blockerPort });
+      await expect(manager.start()).rejects.toThrow(/EADDRINUSE/);
+    } finally {
+      await new Promise<void>((resolve) => blocker.close(() => resolve()));
+    }
+  });
+});
+
 describe('ProxyManager lifecycle', () => {
   it('start and stop without upstreams', async () => {
     const manager = new ProxyManager({ port: 0 });

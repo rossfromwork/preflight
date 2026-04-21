@@ -380,6 +380,50 @@ describe('HttpUpstream.forward()', () => {
     expect(result.responseSizeBytes).toBe(Buffer.byteLength('{"partial":'));
   });
 
+  it('cleans up upstream connection when client disconnects during SSE', async () => {
+    let upstreamResRef: ServerResponse | null = null;
+
+    ({ server: mockServer, port } = await createMockServer((_req, res) => {
+      _req.on('data', () => {});
+      _req.on('end', () => {
+        res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
+        res.write('data: {"event":"one"}\n\n');
+        upstreamResRef = res;
+        // Intentionally never end — simulates a long-lived SSE stream
+      });
+    }));
+
+    const upstream = new HttpUpstream(makeConfig(port));
+
+    const result = await new Promise<import('./types.js').ForwardResult>((resolve) => {
+      const proxyServer = createServer(async (proxyReq, proxyRes) => {
+        const fwdResult = await upstream.forward(proxyReq, proxyRes, Buffer.from('{}'));
+        resolve(fwdResult);
+      });
+      proxyServer.listen(0, '127.0.0.1', () => {
+        const addr = proxyServer.address();
+        const proxyPort = typeof addr === 'object' && addr ? addr.port : 0;
+
+        const { request } = require('node:http') as typeof import('node:http');
+        const req = request(
+          { hostname: '127.0.0.1', port: proxyPort, method: 'POST', path: '/' },
+          (res) => {
+            res.once('data', () => {
+              // Client received first chunk — now disconnect abruptly
+              req.destroy();
+            });
+          },
+        );
+        req.end();
+      });
+    });
+
+    // forward() should have resolved (not hung forever)
+    expect(result.isStreaming).toBe(true);
+    expect(result.statusCode).toBe(200);
+    expect(result.responseSizeBytes).toBeGreaterThan(0);
+  });
+
   it('returns 502 when upstream is unreachable', async () => {
     const upstream = new HttpUpstream({
       name: 'dead',

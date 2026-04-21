@@ -369,7 +369,40 @@ describe('ClaudeMdTracker', () => {
   });
 
   // -------------------------------------------------------------------------
-  // 9. emitMetrics
+  // 9. contextTokensForClaudeMd uses actual file size, not linesAdded
+  // -------------------------------------------------------------------------
+
+  it('contextTokensForClaudeMd reflects actual file size, not linesAdded', () => {
+    const tracker = new ClaudeMdTracker({ sessionStore: store });
+    const changeTimestamp = Date.now();
+
+    // Create a CLAUDE.md file with 2000 characters (= 500 tokens at 0.25 tokens/char)
+    const claudeMdPath = join(tmpDir, 'CLAUDE.md');
+    writeFileSync(claudeMdPath, 'x'.repeat(2000));
+
+    // Record a small edit that only adds 3 lines — old bug would estimate ~30 tokens
+    tracker.detectChange(makeToolCall({
+      toolName: 'Edit',
+      filePath: claudeMdPath,
+      newLineCount: 3,
+      oldLineCount: 0,
+      timestamp: changeTimestamp,
+    } as Partial<ToolCallRecord>));
+
+    // Need at least one session so computeImpact doesn't short-circuit
+    store.saveSession(makeSummary({
+      sessionId: 'before-1',
+      startTime: changeTimestamp - 86_400_000,
+    }));
+
+    const report = tracker.computeImpact(changeTimestamp);
+
+    // Should reflect actual file: 2000 chars * 0.25 = 500 tokens
+    expect(report.contextTokensForClaudeMd).toBe(500);
+  });
+
+  // -------------------------------------------------------------------------
+  // 10. emitMetrics
   // -------------------------------------------------------------------------
 
   it('emitMetrics emits change events and delta metrics', () => {

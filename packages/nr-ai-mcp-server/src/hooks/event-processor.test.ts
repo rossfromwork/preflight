@@ -352,6 +352,20 @@ describe('HookEventProcessor', () => {
     });
   });
 
+  describe('negative duration clamping', () => {
+    it('clamps durationMs to 0 when post timestamp precedes pre timestamp', () => {
+      const processor = new HookEventProcessor({ store, onRecord });
+
+      processor.processEvents([
+        makePreEvent({ timestamp: 5000 }),
+        makePostEvent({ timestamp: 4000 }),
+      ]);
+
+      expect(records).toHaveLength(1);
+      expect(records[0]!.durationMs).toBe(0);
+    });
+  });
+
   describe('integration with LocalStore buffer', () => {
     it('drains and processes events from the buffer file', () => {
       const processor = new HookEventProcessor({ store, onRecord });

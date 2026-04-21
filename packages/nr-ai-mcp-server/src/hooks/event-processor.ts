@@ -173,7 +173,7 @@ export class HookEventProcessor {
         toolName: preEvent.tool,
         toolUseId: (preEvent.toolUseId as string) ?? key,
         timestamp: preEvent.timestamp,
-        durationMs: event.timestamp - preEvent.timestamp,
+        durationMs: Math.max(0, event.timestamp - preEvent.timestamp),
         success: event.success ?? true,
         ...(event.error !== undefined && { error: event.error as string }),
         ...(preEvent.inputSize !== undefined && { inputSizeBytes: preEvent.inputSize }),

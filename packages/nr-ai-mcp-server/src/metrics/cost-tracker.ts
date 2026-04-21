@@ -19,6 +19,7 @@ import type { SessionTracker } from './session-tracker.js';
 export interface CostMetrics {
   sessionTotalCostUsd: number | null;
   costByTask: null; // stub — task boundary detection is Phase 2.3
+  costByModel: Record<string, number>;
   costPerLineOfCode: number | null;
   costPerFileModified: number | null;
   model: string | null;
@@ -49,6 +50,7 @@ export class CostTracker {
   private reportCount = 0;
   private estimationCount = 0;
   private latestCostBreakdown: CostBreakdown | null = null;
+  private costByModel = new Map<string, number>();
   private totalLinesChanged = 0;
 
   constructor(sessionTracker?: SessionTracker) {
@@ -59,19 +61,8 @@ export class CostTracker {
    * Primary path: record exact token usage from self-reporting.
    */
   recordTokenUsage(usage: TokenUsage, model: string): CostBreakdown {
-    const breakdown = calculateCost(model, usage);
-
-    this.totalCostUsd += breakdown.totalUsd;
-    this.totalInputTokens += usage.inputTokens;
-    this.totalOutputTokens += usage.outputTokens;
-    this.totalThinkingTokens += usage.thinkingTokens;
-    this.totalCacheReadTokens += usage.cacheReadTokens;
-    this.totalCacheCreationTokens += usage.cacheCreationTokens;
-    this.currentModel = model;
     this.reportCount++;
-    this.latestCostBreakdown = breakdown;
-
-    return breakdown;
+    return this.accumulateTokens(usage, model);
   }
 
   /**
@@ -89,7 +80,23 @@ export class CostTracker {
     };
 
     this.estimationCount++;
-    return this.recordTokenUsage(usage, model);
+    return this.accumulateTokens(usage, model);
+  }
+
+  private accumulateTokens(usage: TokenUsage, model: string): CostBreakdown {
+    const breakdown = calculateCost(model, usage);
+
+    this.totalCostUsd += breakdown.totalUsd;
+    this.totalInputTokens += usage.inputTokens;
+    this.totalOutputTokens += usage.outputTokens;
+    this.totalThinkingTokens += usage.thinkingTokens;
+    this.totalCacheReadTokens += usage.cacheReadTokens;
+    this.totalCacheCreationTokens += usage.cacheCreationTokens;
+    this.currentModel = model;
+    this.latestCostBreakdown = breakdown;
+    this.costByModel.set(model, (this.costByModel.get(model) ?? 0) + breakdown.totalUsd);
+
+    return breakdown;
   }
 
   /**
@@ -109,6 +116,7 @@ export class CostTracker {
     return {
       sessionTotalCostUsd: hasData ? this.totalCostUsd : null,
       costByTask: null,
+      costByModel: Object.fromEntries(this.costByModel),
       costPerLineOfCode:
         hasData && this.totalLinesChanged > 0
           ? this.totalCostUsd / this.totalLinesChanged
@@ -175,6 +183,7 @@ export class CostTracker {
     this.reportCount = 0;
     this.estimationCount = 0;
     this.latestCostBreakdown = null;
+    this.costByModel = new Map();
     this.totalLinesChanged = 0;
   }
 }

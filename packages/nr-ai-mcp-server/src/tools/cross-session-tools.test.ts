@@ -116,6 +116,14 @@ describe('Cross-session tool handlers', () => {
     expect(parsed.sessions[0]).toHaveProperty('estimated_cost_usd');
   });
 
+  it('handleGetSessionHistory returns error for invalid since date', () => {
+    const result = handleGetSessionHistory(store, { since: 'not-a-date' });
+    const parsed = JSON.parse(result.content[0]!.text);
+
+    expect(result.isError).toBe(true);
+    expect(parsed.error).toBe('Invalid since date');
+  });
+
   // -------------------------------------------------------------------------
   // 2. get_weekly_summary with "latest"
   // -------------------------------------------------------------------------

@@ -117,7 +117,8 @@ export class ProxyManager {
       });
     });
 
-    return new Promise((resolve) => {
+    return new Promise<void>((resolve, reject) => {
+      this.httpServer!.once('error', reject);
       this.httpServer!.listen(this.port, '127.0.0.1', () => {
         logger.info(`Proxy server listening`, { port: this.port });
         resolve();

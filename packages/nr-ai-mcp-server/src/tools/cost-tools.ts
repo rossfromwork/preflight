@@ -115,14 +115,9 @@ export function handleGetCostBreakdown(
       }))
     : [];
 
-  const byModel: Record<string, number> = {};
-  if (metrics.model && metrics.sessionTotalCostUsd !== null) {
-    byModel[metrics.model] = metrics.sessionTotalCostUsd;
-  }
-
   const result = {
     total_usd: metrics.sessionTotalCostUsd ?? 0,
-    by_model: byModel,
+    by_model: metrics.costByModel,
     by_task: byTask,
     cost_per_line_of_code: metrics.costPerLineOfCode,
     cost_per_file_modified: metrics.costPerFileModified,

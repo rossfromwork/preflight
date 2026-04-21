@@ -183,6 +183,7 @@ function computeDimensions(sessions: FullSessionSummary[]): ProfileDimensions {
 
   let totalToolCalls = 0;
   let totalUserMessages = 0;
+  let totalAssistantMessages = 0;
   let totalUserCorrections = 0;
   let totalFiles = 0;
   let totalTasks = 0;
@@ -191,6 +192,7 @@ function computeDimensions(sessions: FullSessionSummary[]): ProfileDimensions {
   for (const s of sessions) {
     totalToolCalls += s.toolCallCount;
     totalUserMessages += s.userMessages;
+    totalAssistantMessages += s.assistantMessages;
     totalUserCorrections += s.userCorrections;
     totalFiles += s.filesRead.length + s.filesModified.length;
     totalTasks += s.taskCount;
@@ -199,7 +201,7 @@ function computeDimensions(sessions: FullSessionSummary[]): ProfileDimensions {
 
   return {
     specificity: computeSpecificity(totalToolCalls, totalUserMessages),
-    autonomy: computeAutonomy(totalUserCorrections, totalUserMessages),
+    autonomy: computeAutonomy(totalToolCalls, totalAssistantMessages),
     correctionRate: computeCorrectionRate(totalUserCorrections, totalUserMessages),
     taskComplexity: computeTaskComplexity(totalFiles, totalToolCalls, totalAgentSpawns, totalTasks),
   };
@@ -216,12 +218,14 @@ function computeSpecificity(toolCalls: number, userMessages: number): number {
 }
 
 /**
- * Autonomy: 1 - (corrections / messages). Low corrections = high autonomy.
- * When userMessages is 0, falls back to 0.5 (neutral/unknown).
+ * Autonomy: tool calls per assistant message, normalized so 5 tool calls/turn = 1.0.
+ * Measures how much multi-step work the AI does independently per turn.
+ * When assistantMessages is 0, falls back to 0.5 (neutral/unknown).
  */
-function computeAutonomy(corrections: number, userMessages: number): number {
-  if (userMessages === 0) return 0.5;
-  return clamp(round(1 - corrections / userMessages, 3), 0, 1);
+function computeAutonomy(toolCalls: number, assistantMessages: number): number {
+  if (assistantMessages === 0) return 0.5;
+  const ratio = toolCalls / assistantMessages;
+  return clamp(round(ratio / 5, 3), 0, 1);
 }
 
 /**

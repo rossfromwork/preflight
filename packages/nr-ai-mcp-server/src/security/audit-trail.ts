@@ -64,10 +64,10 @@ export const DEFAULT_SENSITIVE_FILE_PATTERNS: RegExp[] = [
   /(?:^|\/)id_rsa(?:$|\.)/i,
   /(?:^|\/)id_ed25519(?:$|\.)/i,
   /(?:^|\/)\.ssh\//i,
-  /password/i,
+  /(?:^|\/)password(?:s)?(?:\.[^/]*)?$/i,
   /(?:^|\/)\.npmrc$/i,
   /(?:^|\/)\.pypirc$/i,
-  /token/i,
+  /(?:^|\/)token(?:s)?(?:\.[^/]*)?$/i,
 ];
 
 export const DEFAULT_DESTRUCTIVE_COMMAND_PATTERNS: RegExp[] = [

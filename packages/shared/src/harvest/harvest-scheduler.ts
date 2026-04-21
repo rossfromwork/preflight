@@ -44,6 +44,12 @@ export class HarvestScheduler {
   private eventIntervalId: ReturnType<typeof setInterval> | null = null;
   private metricIntervalId: ReturnType<typeof setInterval> | null = null;
   private running = false;
+  private stopPromise: Promise<void> | null = null;
+
+  private retryEventBatch: NrEventData[] = [];
+  private retryMetricBatch: NrMetric[] = [];
+  private readonly maxRetryEvents: number;
+  private readonly maxRetryMetrics = 500;
 
   private readonly boundBeforeExit: () => void;
   private readonly boundSigterm: () => void;
@@ -58,6 +64,7 @@ export class HarvestScheduler {
 
     this.eventBuffer = new EventBuffer({ maxSize: options.maxEventBufferSize });
     this.metricAggregator = new MetricAggregator();
+    this.maxRetryEvents = options.maxEventBufferSize ?? 1_000;
 
     this.boundBeforeExit = () => {
       void this.stop();
@@ -103,7 +110,14 @@ export class HarvestScheduler {
   }
 
   async stop(): Promise<void> {
+    if (this.stopPromise) return this.stopPromise;
     if (!this.running) return;
+
+    this.stopPromise = this.doStop();
+    return this.stopPromise;
+  }
+
+  private async doStop(): Promise<void> {
     this.running = false;
 
     if (this.eventIntervalId !== null) {
@@ -125,44 +139,74 @@ export class HarvestScheduler {
   }
 
   async harvestEvents(): Promise<void> {
-    const batch = this.eventBuffer.flush();
+    const fresh = this.eventBuffer.flush();
+    const batch = this.retryEventBatch.length > 0
+      ? [...this.retryEventBatch, ...fresh]
+      : fresh;
+    this.retryEventBatch = [];
     if (batch.length === 0) return;
 
     try {
       const result = await this.sendEventsFn(batch, this.licenseKey, this.transportOptions);
       if (!result.success) {
-        logger.warn('Failed to send events — batch dropped', {
-          droppedCount: batch.length,
+        logger.warn('Failed to send events — re-queuing batch for retry', {
+          batchSize: batch.length,
           error: result.error,
         });
+        this.requeueEvents(batch);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      logger.warn('Unexpected error sending events — batch dropped', {
-        droppedCount: batch.length,
+      logger.warn('Unexpected error sending events — re-queuing batch for retry', {
+        batchSize: batch.length,
         error: message,
       });
+      this.requeueEvents(batch);
     }
   }
 
   async harvestMetrics(): Promise<void> {
-    const metrics = this.metricAggregator.harvest();
-    if (metrics.length === 0) return;
+    const fresh = this.metricAggregator.harvest();
+    const batch = this.retryMetricBatch.length > 0
+      ? [...this.retryMetricBatch, ...fresh]
+      : fresh;
+    this.retryMetricBatch = [];
+    if (batch.length === 0) return;
 
     try {
-      const result = await this.sendMetricsFn(metrics, this.licenseKey, this.transportOptions);
+      const result = await this.sendMetricsFn(batch, this.licenseKey, this.transportOptions);
       if (!result.success) {
-        logger.warn('Failed to send metrics — batch dropped', {
-          droppedCount: metrics.length,
+        logger.warn('Failed to send metrics — re-queuing batch for retry', {
+          batchSize: batch.length,
           error: result.error,
         });
+        this.requeueMetrics(batch);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      logger.warn('Unexpected error sending metrics — batch dropped', {
-        droppedCount: metrics.length,
+      logger.warn('Unexpected error sending metrics — re-queuing batch for retry', {
+        batchSize: batch.length,
         error: message,
       });
+      this.requeueMetrics(batch);
+    }
+  }
+
+  private requeueEvents(batch: NrEventData[]): void {
+    this.retryEventBatch = [...batch, ...this.retryEventBatch];
+    if (this.retryEventBatch.length > this.maxRetryEvents) {
+      const dropped = this.retryEventBatch.length - this.maxRetryEvents;
+      this.retryEventBatch = this.retryEventBatch.slice(0, this.maxRetryEvents);
+      logger.warn('Event retry buffer overflow — oldest entries dropped', { dropped });
+    }
+  }
+
+  private requeueMetrics(batch: NrMetric[]): void {
+    this.retryMetricBatch = [...batch, ...this.retryMetricBatch];
+    if (this.retryMetricBatch.length > this.maxRetryMetrics) {
+      const dropped = this.retryMetricBatch.length - this.maxRetryMetrics;
+      this.retryMetricBatch = this.retryMetricBatch.slice(0, this.maxRetryMetrics);
+      logger.warn('Metric retry buffer overflow — oldest entries dropped', { dropped });
     }
   }
 }

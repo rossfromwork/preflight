@@ -281,7 +281,7 @@ describe('Blind editing detection', () => {
     expect(blind[0].file).toBe('/b.ts');
   });
 
-  it('passing test clears all streaks', () => {
+  it('passing test clears edit streaks but preserves already-flagged patterns', () => {
     const detector = new AntiPatternDetector();
 
     const calls: ToolCallRecord[] = [
@@ -293,11 +293,40 @@ describe('Blind editing detection', () => {
       makeRecord({ toolName: 'Edit', filePath: '/b.ts' }),
       makeRecord({ toolName: 'Edit', filePath: '/b.ts' }),
       makeRecord({ toolName: 'Bash', isTestCommand: true, success: true }),
+      // After passing test, streaks are reset — new edits start from 0
+      makeRecord({ toolName: 'Edit', filePath: '/a.ts' }),
+      makeRecord({ toolName: 'Edit', filePath: '/a.ts' }),
     ];
 
     const result = detector.analyze(calls);
     const blind = result.patterns.filter(p => p.type === 'blind_editing');
-    expect(blind).toHaveLength(0);
+
+    // /b.ts was flagged (4 edits > threshold) before the test — preserved
+    // /a.ts had 3 edits (at threshold, not above) before test, then 2 after reset — not flagged
+    expect(blind).toHaveLength(1);
+    expect(blind[0].file).toBe('/b.ts');
+  });
+
+  it('Read after flagged blind edit preserves the detection', () => {
+    const detector = new AntiPatternDetector();
+
+    const calls: ToolCallRecord[] = [
+      // 5 edits to /a.ts — flagged as blind editing
+      makeRecord({ toolName: 'Edit', filePath: '/a.ts' }),
+      makeRecord({ toolName: 'Edit', filePath: '/a.ts' }),
+      makeRecord({ toolName: 'Edit', filePath: '/a.ts' }),
+      makeRecord({ toolName: 'Edit', filePath: '/a.ts' }),
+      makeRecord({ toolName: 'Edit', filePath: '/a.ts' }),
+      // Reading /a.ts resets the streak but should NOT erase the detection
+      makeRecord({ toolName: 'Read', filePath: '/a.ts' }),
+    ];
+
+    const result = detector.analyze(calls);
+    const blind = result.patterns.filter(p => p.type === 'blind_editing');
+
+    expect(blind).toHaveLength(1);
+    expect(blind[0].file).toBe('/a.ts');
+    expect(blind[0].editCount).toBe(5);
   });
 
   it('failing test does NOT clear streaks', () => {

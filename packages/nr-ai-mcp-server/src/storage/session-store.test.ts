@@ -197,6 +197,7 @@ describe('buildSessionSummary', () => {
     };
 
     const mockTaskDetector = {
+      getCurrentTask: () => null,
       getMetrics: () => ({
         totalTasksCompleted: 2,
         currentTaskActive: false,
@@ -288,6 +289,79 @@ describe('buildSessionSummary', () => {
     expect(summary.taskCount).toBe(2);
     expect(summary.agentSpawns).toBe(1);
     expect(summary.outcome).toBe('completed');
+  });
+
+  it('includes active task data in the summary', () => {
+    const mockSessionTracker = {
+      getMetrics: () => ({
+        sessionId: 'active-task-session',
+        sessionStartTime: 1700000000000,
+        sessionDurationMs: 60_000,
+        toolCallCount: 5,
+        toolCallCountByTool: { Read: 3, Edit: 2 },
+        toolDurationMsByTool: {},
+        toolSuccessRate: 1,
+        toolSuccessRateByTool: {},
+        toolErrorCount: 0,
+        toolErrorsByType: {},
+        uniqueFilesRead: 1,
+        uniqueFilesWritten: 1,
+        bashCommandsRun: 0,
+        bashExitCodes: {},
+        searchQueries: 0,
+        toolCallTimeline: [],
+      }),
+    };
+
+    const activeTask = {
+      taskId: 'active-1',
+      startTime: 1700000000000,
+      endTime: 1700000060000,
+      durationMs: 60_000,
+      toolCallCount: 5,
+      toolCallsByType: { Read: 3, Edit: 2 },
+      filesRead: ['/src/active.ts'],
+      filesModified: ['/src/active.ts'],
+      linesChanged: 30,
+      bashCommandsRun: 0,
+      testsRun: 2,
+      testsPassed: 2,
+      buildRun: 1,
+      buildPassed: 1,
+      estimatedCostUsd: 0.04,
+      tokensUsed: 3000,
+      askedUserQuestions: 0,
+      subAgentsSpawned: 1,
+      toolCalls: [],
+    };
+
+    const mockTaskDetector = {
+      getMetrics: () => ({
+        totalTasksCompleted: 0,
+        currentTaskActive: true,
+        currentTaskToolCalls: 5,
+        averageTaskDurationMs: null,
+        averageToolCallsPerTask: null,
+        completedTasks: [],
+      }),
+      getCurrentTask: () => activeTask,
+    };
+
+    const summary = buildSessionSummary({
+      sessionTracker: mockSessionTracker as any,
+      taskDetector: mockTaskDetector as any,
+      developer: 'alice',
+    });
+
+    expect(summary.filesRead).toEqual(['/src/active.ts']);
+    expect(summary.filesModified).toEqual(['/src/active.ts']);
+    expect(summary.linesAdded).toBe(30);
+    expect(summary.testRunCount).toBe(2);
+    expect(summary.testPassCount).toBe(2);
+    expect(summary.buildRunCount).toBe(1);
+    expect(summary.buildPassCount).toBe(1);
+    expect(summary.agentSpawns).toBe(1);
+    expect(summary.taskCount).toBe(1);
   });
 
   it('handles missing optional trackers gracefully', () => {

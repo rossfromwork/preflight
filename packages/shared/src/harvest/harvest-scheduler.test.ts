@@ -151,31 +151,189 @@ describe('HarvestScheduler', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // 4. Send failure → warning logged, scheduler continues
+  // 4. Send failure → re-queued and retried on next harvest
   // ---------------------------------------------------------------------------
-  it('logs warning on send failure and continues operating', async () => {
+  it('re-queues events on send failure and retries on next harvest', async () => {
     const sendEventsFn = jest
       .fn<Promise<TransportResult>, any>()
-      .mockResolvedValue(failureResult);
+      .mockResolvedValueOnce(failureResult)
+      .mockResolvedValue(successResult);
 
     const { scheduler } = makeScheduler({ sendEventsFn });
 
     scheduler.addEvent({ eventType: 'Test', value: 1 });
     scheduler.start();
 
+    // First harvest — fails, events re-queued
+    await jest.advanceTimersByTimeAsync(5_000);
+    expect(sendEventsFn).toHaveBeenCalledTimes(1);
+
+    const logOutput = stderrSpy.mock.calls.map((c: unknown[]) => c[0] as string).join('');
+    expect(logOutput).toContain('re-queuing batch for retry');
+
+    // Second harvest — retry succeeds, includes the re-queued event
+    await jest.advanceTimersByTimeAsync(5_000);
+    expect(sendEventsFn).toHaveBeenCalledTimes(2);
+    const retryBatch = sendEventsFn.mock.calls[1][0];
+    expect(retryBatch).toHaveLength(1);
+    expect(retryBatch[0].value).toBe(1);
+
+    await scheduler.stop();
+  });
+
+  // ---------------------------------------------------------------------------
+  // 5. Re-queued events are combined with new events on retry
+  // ---------------------------------------------------------------------------
+  it('combines re-queued events with new events on next harvest', async () => {
+    const sendEventsFn = jest
+      .fn<Promise<TransportResult>, any>()
+      .mockResolvedValueOnce(failureResult)
+      .mockResolvedValue(successResult);
+
+    const { scheduler } = makeScheduler({ sendEventsFn });
+
+    scheduler.addEvent({ eventType: 'Original', seq: 1 });
+    scheduler.start();
+
     // First harvest — fails
     await jest.advanceTimersByTimeAsync(5_000);
     expect(sendEventsFn).toHaveBeenCalledTimes(1);
 
-    // Verify warning was logged
-    const logOutput = stderrSpy.mock.calls.map((c: unknown[]) => c[0] as string).join('');
-    expect(logOutput).toContain('Failed to send events');
-    expect(logOutput).toContain('droppedCount');
+    // Add new event before next harvest
+    scheduler.addEvent({ eventType: 'New', seq: 2 });
 
-    // Add more events — scheduler should still be running
-    scheduler.addEvent({ eventType: 'Test', value: 2 });
+    // Second harvest — should include both re-queued and new events
     await jest.advanceTimersByTimeAsync(5_000);
     expect(sendEventsFn).toHaveBeenCalledTimes(2);
+    const retryBatch = sendEventsFn.mock.calls[1][0];
+    expect(retryBatch).toHaveLength(2);
+    expect(retryBatch[0].seq).toBe(1); // re-queued event first
+    expect(retryBatch[1].seq).toBe(2); // new event second
+
+    await scheduler.stop();
+  });
+
+  // ---------------------------------------------------------------------------
+  // 6. Re-queued events are capped to prevent unbounded growth
+  // ---------------------------------------------------------------------------
+  it('caps re-queued events to maxEventBufferSize', async () => {
+    const sendEventsFn = jest
+      .fn<Promise<TransportResult>, any>()
+      .mockResolvedValue(failureResult);
+
+    const { scheduler } = makeScheduler({
+      sendEventsFn,
+      maxEventBufferSize: 5,
+    });
+
+    // Add 5 events and fail
+    for (let i = 0; i < 5; i++) {
+      scheduler.addEvent({ eventType: 'Test', seq: i });
+    }
+    scheduler.start();
+
+    // First harvest — fails, 5 events re-queued (at capacity)
+    await jest.advanceTimersByTimeAsync(5_000);
+
+    // Add 3 more events
+    for (let i = 10; i < 13; i++) {
+      scheduler.addEvent({ eventType: 'Test', seq: i });
+    }
+
+    // Second harvest — 5 retry + 3 new = 8, capped to 5
+    await jest.advanceTimersByTimeAsync(5_000);
+    expect(sendEventsFn).toHaveBeenCalledTimes(2);
+    // The second call should have at most 8 events (5 retry + 3 new)
+    // After re-queue, the retry buffer is capped to 5
+    const logOutput = stderrSpy.mock.calls.map((c: unknown[]) => c[0] as string).join('');
+    expect(logOutput).toContain('overflow');
+
+    await scheduler.stop();
+  });
+
+  // ---------------------------------------------------------------------------
+  // 7. Metrics are re-queued on send failure and retried
+  // ---------------------------------------------------------------------------
+  it('re-queues metrics on send failure and retries on next harvest', async () => {
+    const sendMetricsFn = jest
+      .fn<Promise<TransportResult>, any>()
+      .mockResolvedValueOnce(failureResult)
+      .mockResolvedValue(successResult);
+
+    const { scheduler } = makeScheduler({ sendMetricsFn });
+
+    scheduler.recordMetric('ai.duration', 100);
+    scheduler.start();
+
+    // First metric harvest at 60s — fails
+    await jest.advanceTimersByTimeAsync(60_000);
+    expect(sendMetricsFn).toHaveBeenCalledTimes(1);
+    const firstBatch = sendMetricsFn.mock.calls[0][0];
+    expect(firstBatch.length).toBeGreaterThan(0);
+
+    // Second metric harvest at 120s — retry succeeds with re-queued metrics
+    await jest.advanceTimersByTimeAsync(60_000);
+    expect(sendMetricsFn).toHaveBeenCalledTimes(2);
+    const retryBatch = sendMetricsFn.mock.calls[1][0];
+    expect(retryBatch.length).toBeGreaterThanOrEqual(firstBatch.length);
+
+    await scheduler.stop();
+  });
+
+  // ---------------------------------------------------------------------------
+  // 8. Concurrent stop() calls await the same flush (no short-circuit)
+  // ---------------------------------------------------------------------------
+  it('concurrent stop() calls share the same flush promise', async () => {
+    const sendEventsFn = jest.fn<Promise<TransportResult>, any>().mockImplementation(
+      () => new Promise((resolve) => setTimeout(() => resolve(successResult), 100)),
+    );
+    const sendMetricsFn = jest.fn<Promise<TransportResult>, any>().mockImplementation(
+      () => new Promise((resolve) => setTimeout(() => resolve(successResult), 100)),
+    );
+
+    const { scheduler } = makeScheduler({ sendEventsFn, sendMetricsFn });
+
+    scheduler.addEvent({ eventType: 'Test', value: 1 });
+    scheduler.recordMetric('ai.duration', 42);
+    scheduler.start();
+
+    // Call stop() twice concurrently (simulates SIGTERM handler + main shutdown)
+    const p1 = scheduler.stop();
+    const p2 = scheduler.stop();
+
+    // Advance timers to let the mocked send promises resolve
+    await jest.advanceTimersByTimeAsync(200);
+    await Promise.all([p1, p2]);
+
+    // Final flush should have fired exactly once
+    expect(sendEventsFn).toHaveBeenCalledTimes(1);
+    expect(sendMetricsFn).toHaveBeenCalledTimes(1);
+  });
+
+  // ---------------------------------------------------------------------------
+  // 9. Events re-queued on thrown exception
+  // ---------------------------------------------------------------------------
+  it('re-queues events when sendEventsFn throws', async () => {
+    const sendEventsFn = jest
+      .fn<Promise<TransportResult>, any>()
+      .mockRejectedValueOnce(new Error('network timeout'))
+      .mockResolvedValue(successResult);
+
+    const { scheduler } = makeScheduler({ sendEventsFn });
+
+    scheduler.addEvent({ eventType: 'Test', value: 1 });
+    scheduler.start();
+
+    // First harvest — throws, events re-queued
+    await jest.advanceTimersByTimeAsync(5_000);
+    expect(sendEventsFn).toHaveBeenCalledTimes(1);
+
+    // Second harvest — retry succeeds
+    await jest.advanceTimersByTimeAsync(5_000);
+    expect(sendEventsFn).toHaveBeenCalledTimes(2);
+    const retryBatch = sendEventsFn.mock.calls[1][0];
+    expect(retryBatch).toHaveLength(1);
+    expect(retryBatch[0].value).toBe(1);
 
     await scheduler.stop();
   });

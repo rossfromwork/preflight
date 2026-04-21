@@ -250,6 +250,46 @@ describe('AuditTrailManager', () => {
     expect(metrics.securityAlerts).toBe(2);
     expect(metrics.alertsBySeverity).toEqual({ high: 1, critical: 1 });
   });
+
+  // 16. /password/ and /token/ patterns avoid false positives on common source files
+  it('does not flag common source files containing "password" or "token" as substrings', () => {
+    const mgr = makeManager();
+    const falsePositives = [
+      'src/utils/tokenizer.ts',
+      'src/components/PasswordReset.tsx',
+      'src/auth/token-refresh.ts',
+      'lib/password-validator.js',
+      'src/tokenUtils.ts',
+    ];
+
+    for (const filePath of falsePositives) {
+      const audit = mgr.recordToolCall(
+        makeRecord({ toolName: 'Read', filePath } as any),
+      );
+      expect(audit.securityAlert).toBeUndefined();
+    }
+  });
+
+  // 17. /password/ and /token/ patterns still match actual sensitive files
+  it('still flags actual sensitive files named password or token', () => {
+    const mgr = makeManager();
+    const truePositives = [
+      'secrets/password.json',
+      'config/token.txt',
+      '/home/user/.config/passwords.yml',
+      'tokens.env',
+      'password',
+      'token',
+    ];
+
+    for (const filePath of truePositives) {
+      const audit = mgr.recordToolCall(
+        makeRecord({ toolName: 'Read', filePath } as any),
+      );
+      expect(audit.securityAlert).toBeDefined();
+      expect(audit.securityAlert!.alertType).toBe('sensitive_file');
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

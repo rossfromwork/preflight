@@ -229,13 +229,18 @@ export class ClaudeMdTracker {
       ),
     };
 
-    // Estimate context tokens from the latest non-deleted change
+    // Estimate context tokens from the actual file size
     let contextTokensForClaudeMd = 0;
     const latestChange = [...this.changes]
       .reverse()
       .find((c) => c.changeType !== 'deleted');
     if (latestChange) {
-      contextTokensForClaudeMd = Math.round(latestChange.linesAdded * 40 * TOKENS_PER_CHAR);
+      try {
+        const cost = ClaudeMdTracker.estimateContextCost(latestChange.filePath);
+        contextTokensForClaudeMd = cost.estimatedTokens;
+      } catch {
+        contextTokensForClaudeMd = 0;
+      }
     }
 
     // Generate verdict

@@ -245,18 +245,27 @@ export function handleGetEfficiencyScore(
   taskDetector?: TaskDetector,
   antiPatternDetector?: AntiPatternDetector,
 ) {
-  // Compute scores on demand for any unscored tasks
+  // Compute scores on demand for any unscored completed tasks,
+  // and always rescore the active task (it grows over time).
   if (taskDetector) {
     const scoredIds = new Set(efficiencyScorer.getScores().map((s) => s.taskId));
-    const tasks = getAllTasks(taskDetector);
+    const completedTasks = taskDetector.getCompletedTasks();
 
-    for (const task of tasks) {
+    for (const task of completedTasks) {
       if (!scoredIds.has(task.taskId)) {
         const patterns = antiPatternDetector
           ? antiPatternDetector.analyze(task.toolCalls).patterns
           : [];
         efficiencyScorer.computeScore(task, patterns);
       }
+    }
+
+    const activeTask = taskDetector.getCurrentTask();
+    if (activeTask) {
+      const patterns = antiPatternDetector
+        ? antiPatternDetector.analyze(activeTask.toolCalls).patterns
+        : [];
+      efficiencyScorer.updateScore(activeTask, patterns);
     }
   }
 

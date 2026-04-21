@@ -133,6 +133,36 @@ export class EfficiencyScorer {
     };
   }
 
+  /**
+   * Recompute and replace the score for a task that may have changed (e.g., active task).
+   */
+  updateScore(task: AiCodingTask, antiPatterns?: AntiPattern[]): EfficiencyScore {
+    const idx = this.scores.findIndex((s) => s.taskId === task.taskId);
+    const components = this.computeComponents(task, antiPatterns);
+    const raw =
+      components.speed * this.speedWeight +
+      components.correctness * this.correctnessWeight +
+      components.autonomy * this.autonomyWeight +
+      components.firstAttemptQuality * this.firstAttemptQualityWeight;
+
+    const score = clamp(Math.round(raw * 1000) / 1000, 0, 1);
+
+    const result: EfficiencyScore = {
+      score,
+      components,
+      taskId: task.taskId,
+      timestamp: task.endTime,
+    };
+
+    if (idx >= 0) {
+      this.scores[idx] = result;
+    } else {
+      this.scores.push(result);
+    }
+
+    return result;
+  }
+
   getScores(): EfficiencyScore[] {
     return [...this.scores];
   }

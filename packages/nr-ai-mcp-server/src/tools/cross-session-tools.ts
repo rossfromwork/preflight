@@ -199,6 +199,12 @@ export function handleGetSessionHistory(
   args: { since?: string; developer?: string; limit?: number },
 ) {
   const since = args.since ? new Date(args.since) : undefined;
+  if (since && isNaN(since.getTime())) {
+    return {
+      content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Invalid since date' }) }],
+      isError: true,
+    };
+  }
   const sessions = sessionStore.loadAllSessions({
     since,
     developer: args.developer,

@@ -84,7 +84,7 @@ describe('MetricAggregator', () => {
   // ---------------------------------------------------------------------------
   // 5. Output metrics have correct type, timestamp, and attributes
   // ---------------------------------------------------------------------------
-  it('output metrics have type gauge, valid timestamp, and original attributes', () => {
+  it('output metrics have correct types, valid timestamp, and original attributes', () => {
     const agg = new MetricAggregator();
     const before = Date.now();
 
@@ -95,10 +95,15 @@ describe('MetricAggregator', () => {
 
     expect(metrics).toHaveLength(4);
     for (const m of metrics) {
-      expect(m.type).toBe('gauge');
       expect(m.timestamp).toBeGreaterThanOrEqual(before);
       expect(m.timestamp).toBeLessThanOrEqual(after);
       expect(m.attributes).toEqual({ provider: 'anthropic', model: 'sonnet' });
     }
+
+    const byName = Object.fromEntries(metrics.map((m) => [m.name, m.type]));
+    expect(byName['ai.cost.count']).toBe('count');
+    expect(byName['ai.cost.sum']).toBe('count');
+    expect(byName['ai.cost.min']).toBe('gauge');
+    expect(byName['ai.cost.max']).toBe('gauge');
   });
 });

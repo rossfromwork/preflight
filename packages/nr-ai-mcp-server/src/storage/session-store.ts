@@ -218,7 +218,11 @@ export function buildSessionSummary(sources: BuildSessionSummarySources): FullSe
   const allToolCalls: import('../storage/types.js').ToolCallRecord[] = [];
 
   if (taskMetrics) {
-    for (const task of taskMetrics.completedTasks) {
+    const allTasks = [...taskMetrics.completedTasks];
+    const activeTask = taskDetector?.getCurrentTask();
+    if (activeTask) allTasks.push(activeTask);
+
+    for (const task of allTasks) {
       for (const f of task.filesRead) allFilesRead.add(f);
       for (const f of task.filesModified) allFilesModified.add(f);
       totalLinesChanged += task.linesChanged;
@@ -281,7 +285,7 @@ export function buildSessionSummary(sources: BuildSessionSummarySources): FullSe
     tokensThinking: costMetrics?.totalThinkingTokens ?? 0,
     efficiencyScore: efficiencyAvg?.score ?? null,
     antiPatterns,
-    taskCount: taskMetrics?.totalTasksCompleted ?? 0,
+    taskCount: (taskMetrics?.totalTasksCompleted ?? 0) + (taskMetrics?.currentTaskActive ? 1 : 0),
     taskSuccessRate,
     contextCompressions: 0,
     agentSpawns: totalAgentSpawns,
