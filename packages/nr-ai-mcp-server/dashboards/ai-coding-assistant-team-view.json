@@ -15,7 +15,7 @@
             "nrqlQueries": [
               {
                 "accountIds": [],
-                "query": "SELECT sum(ai.cost.session_total_usd) AS 'USD' FROM Metric SINCE 7 days ago"
+                "query": "SELECT sum(ai.cost.session_total_usd.sum) AS 'USD' FROM Metric SINCE 7 days ago"
               }
             ]
           }
@@ -28,7 +28,7 @@
             "nrqlQueries": [
               {
                 "accountIds": [],
-                "query": "SELECT average(ai.efficiency.score) AS 'Score' FROM Metric SINCE 7 days ago"
+                "query": "SELECT average(ai.efficiency.score.sum) AS 'Score' FROM Metric SINCE 7 days ago"
               }
             ],
             "thresholds": [
@@ -89,7 +89,7 @@
             "nrqlQueries": [
               {
                 "accountIds": [],
-                "query": "SELECT average(ai.efficiency.score) FROM Metric FACET developer SINCE 7 days ago"
+                "query": "SELECT average(ai.efficiency.score.sum) FROM Metric FACET developer SINCE 7 days ago"
               }
             ]
           }
@@ -102,7 +102,7 @@
             "nrqlQueries": [
               {
                 "accountIds": [],
-                "query": "SELECT sum(ai.cost.session_total_usd) FROM Metric FACET developer SINCE 7 days ago"
+                "query": "SELECT sum(ai.cost.session_total_usd.sum) FROM Metric FACET developer SINCE 7 days ago"
               }
             ]
           }
@@ -129,7 +129,7 @@
             "nrqlQueries": [
               {
                 "accountIds": [],
-                "query": "SELECT average(ai.efficiency.score) FROM Metric FACET developer TIMESERIES 1 day SINCE 30 days ago"
+                "query": "SELECT average(ai.efficiency.score.sum) FROM Metric FACET developer TIMESERIES 1 day SINCE 30 days ago"
               }
             ]
           }
@@ -142,7 +142,7 @@
             "nrqlQueries": [
               {
                 "accountIds": [],
-                "query": "SELECT sum(ai.cost.session_total_usd) FROM Metric TIMESERIES 1 day SINCE 30 days ago"
+                "query": "SELECT sum(ai.cost.session_total_usd.sum) FROM Metric TIMESERIES 1 day SINCE 30 days ago"
               }
             ]
           }

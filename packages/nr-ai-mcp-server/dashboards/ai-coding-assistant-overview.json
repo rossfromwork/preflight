@@ -15,7 +15,7 @@
             "nrqlQueries": [
               {
                 "accountIds": [],
-                "query": "SELECT latest(ai.session.duration_ms) / 60000 AS 'Minutes' FROM Metric SINCE 1 hour ago"
+                "query": "SELECT latest(ai.session.duration_ms.sum) / 60000 AS 'Minutes' FROM Metric SINCE 1 hour ago"
               }
             ]
           }
