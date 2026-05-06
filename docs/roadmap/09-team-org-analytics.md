@@ -13,7 +13,7 @@ Before starting, read these files end-to-end:
 - `packages/nr-ai-mcp-server/src/config.ts` — `McpServerConfig`; new `teamId`/`projectId`/`orgId` fields go here
 - `packages/nr-ai-mcp-server/src/transport/nr-ingest.ts` — `toolCallToNrEvent()` and `proxyToolCallToNrEvent()`; team dimensions are added to every event here
 - `packages/nr-ai-mcp-server/src/tools/cross-session-tools.ts` — pattern for cross-session MCP tools; the new `nr_observe_get_team_summary` follows this pattern
-- `packages/nr-ai-mcp-server/src/dashboards/` — inspect an existing dashboard JSON to understand the dashboard format before creating the manager dashboard
+- `packages/nr-ai-mcp-server/dashboards/` — inspect an existing dashboard JSON to understand the dashboard format before creating the manager dashboard
 
 ---
 
@@ -27,7 +27,7 @@ Tag all NR events and metrics with `teamId`, `projectId`, and `orgId` dimensions
 
 Open `packages/nr-ai-mcp-server/src/config.ts`.
 
-### 1a — Add to the `McpServerConfig` interface
+### ✅ 1a — Add to the `McpServerConfig` interface
 
 Add these three fields after the `developer` field:
 
@@ -37,7 +37,7 @@ readonly projectId: string | null;
 readonly orgId: string | null;
 ```
 
-### 1b — Add a helper to extract `projectId` from git remote URL
+### ✅ 1b — Add a helper to extract `projectId` from git remote URL
 
 ```typescript
 function inferProjectId(): string | null {
@@ -57,25 +57,40 @@ function inferProjectId(): string | null {
 }
 ```
 
-### 1c — Add env/file loading in `loadMcpConfig()`
+### ✅ 1c — Add env/file loading in `loadMcpConfig()`
 
 After the `developer` field construction, add:
 
 ```typescript
-teamId:
+teamId: sanitizeOrgField(
   process.env.NEW_RELIC_AI_TEAM_ID ??
   (typeof file.teamId === 'string' ? file.teamId : null),
+),
 
-projectId:
+projectId: sanitizeOrgField(
   process.env.NEW_RELIC_AI_PROJECT_ID ??
   (typeof file.projectId === 'string' ? file.projectId : inferProjectId()),
+),
 
-orgId:
+orgId: sanitizeOrgField(
   process.env.NEW_RELIC_AI_ORG_ID ??
   (typeof file.orgId === 'string' ? file.orgId : null),
+),
 ```
 
-### 1d — Update the debug log
+Where `sanitizeOrgField` is a small helper defined alongside `sanitizeDeveloper`:
+
+```typescript
+function sanitizeOrgField(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const sanitized = value.replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, 128);
+  return sanitized || null;
+}
+```
+
+This strips control characters, trims whitespace, truncates to 128 chars, and converts empty strings to `null` — the same treatment applied to the `developer` field. These values end up in NR event attributes and must not contain raw unsanitized input.
+
+### ✅ 1d — Update the debug log
 
 Add `teamId`, `projectId`, `orgId` to the `logger.debug('Configuration loaded', ...)` call.
 
@@ -85,7 +100,7 @@ Add `teamId`, `projectId`, `orgId` to the `logger.debug('Configuration loaded', 
 
 Open `packages/nr-ai-mcp-server/src/transport/nr-ingest.ts`.
 
-### 2a — Update `NrIngestOptions`
+### ✅ 2a — Update `NrIngestOptions`
 
 Add three new fields:
 
@@ -97,7 +112,7 @@ orgId?: string | null;
 
 Store them as private fields on the class (`this.teamId`, etc.).
 
-### 2b — Update `toolCallToNrEvent()`
+### ✅ 2b — Update `toolCallToNrEvent()`
 
 The function signature becomes:
 
@@ -116,9 +131,22 @@ if (attrs.projectId) event.project_id = attrs.projectId;
 if (attrs.orgId) event.org_id = attrs.orgId;
 ```
 
-Apply the same pattern to `proxyToolCallToNrEvent()`, `aiCodingTaskToNrEvent()`, `antiPatternToNrEvent()`, `auditRecordToNrEvent()`, and any other event builder functions in this file.
+Apply the same pattern to every event builder function and inline event constructor in this file. The full list:
 
-### 2c — Thread team attrs through all callers
+- `proxyToolCallToNrEvent()` — update the `attrs` parameter type and add the three conditional lines after `app_name`
+- `proxyRequestToNrEvent()` — same treatment (emits `AiProxyRequest` events)
+- `codingTaskToNrEvent()` — **note: this is the correct name, not `aiCodingTaskToNrEvent`**
+- `antiPatternToNrEvent()` — same treatment
+- `auditRecordToNrEvent()` — same treatment (defined in `security/audit-trail.ts`, update its `attrs` parameter)
+- `ingestBudgetWarning()` — this method builds its `AiBudgetWarning` event inline (no helper function). After the existing `if (this.sessionTraceId != null) nrEvent.session_id = this.sessionTraceId;` line, add:
+
+```typescript
+if (this.teamId) nrEvent.team_id = this.teamId;
+if (this.projectId) nrEvent.project_id = this.projectId;
+if (this.orgId) nrEvent.org_id = this.orgId;
+```
+
+### ✅ 2c — Thread team attrs through all callers
 
 In `NrIngestManager`, update every call to the event builder functions to pass `teamId`, `projectId`, `orgId` from `this.teamId` etc.
 
@@ -126,13 +154,66 @@ In `NrIngestManager`, update every call to the event builder functions to pass `
 
 ## Step 3 — Add team dimensions to NR metrics
 
-In the `HarvestScheduler` metric emission code (look for where `MetricAggregator` or gauge/count metrics are emitted), add `team_id`, `project_id`, `org_id` as attributes to every metric where they are non-null.
+All metric emission happens inside `NrIngestManager.emitSessionGauges()` in `nr-ingest.ts`. There is no `MetricAggregator` class to subclass — metrics are emitted via `this.scheduler.recordMetric()` and via the duck-typed `devAggregator` object.
 
-The `MetricAggregator` from the shared package accepts an attributes map. Thread the team fields through.
+### ✅ 3a — Build a team attrs helper object
+
+At the top of `emitSessionGauges()`, build a reusable attrs object before the first `record()` call:
+
+```typescript
+const teamAttrs: Record<string, string> = {};
+if (this.teamId) teamAttrs.team_id = this.teamId;
+if (this.projectId) teamAttrs.project_id = this.projectId;
+if (this.orgId) teamAttrs.org_id = this.orgId;
+```
+
+### ✅ 3b — Add team attrs to session-level metrics
+
+Update the three `record()` calls at the top of `emitSessionGauges()`:
+
+```typescript
+record('ai.session.duration_ms', metrics.sessionDurationMs, { ...teamAttrs });
+record('ai.session.unique_files_read', metrics.uniqueFilesRead, { ...teamAttrs });
+record('ai.session.unique_files_written', metrics.uniqueFilesWritten, { ...teamAttrs });
+```
+
+### ✅ 3c — Add team attrs to cost/efficiency metrics
+
+Inside the `devAggregator` object literal, update the `record` method to spread `teamAttrs`:
+
+```typescript
+const devAggregator = {
+  record(name: string, value: number, attrs: Record<string, string | number> = {}) {
+    scheduler.recordMetric(
+      name,
+      value,
+      sessionId != null
+        ? { developer, session_id: sessionId, ...teamAttrs, ...attrs }
+        : { developer, ...teamAttrs, ...attrs },
+    );
+  },
+} as unknown as MetricAggregator;
+```
+
+### ✅ 3d — Add team attrs to tool call metrics
+
+In `ingestToolCall()`, the three `this.scheduler.recordMetric()` calls for `ai.tool.call_count`, `ai.tool.duration_ms`, and `ai.tool.success` also need team attrs. Update each one to spread the instance-level team fields:
+
+```typescript
+const teamDims: Record<string, string> = {};
+if (this.teamId) teamDims.team_id = this.teamId;
+if (this.projectId) teamDims.project_id = this.projectId;
+if (this.orgId) teamDims.org_id = this.orgId;
+
+this.scheduler.recordMetric('ai.tool.call_count', 1,
+  sessionId != null ? { tool, session_id: sessionId, ...teamDims } : { tool, ...teamDims });
+```
+
+Apply the same spread to the `duration_ms` and `success` metric calls.
 
 ---
 
-## Step 4 — Wire team config through `index.ts`
+## ✅ Step 4 — Wire team config through `index.ts`
 
 Open `packages/nr-ai-mcp-server/src/index.ts`.
 
@@ -153,7 +234,15 @@ nrIngest = new NrIngestManager({
 
 Open `packages/nr-ai-mcp-server/src/tools/cross-session-tools.ts`.
 
-### 5a — Tool definition
+### ✅ 5a — Module-level constant and tool definition
+
+Add this constant at the top of `cross-session-tools.ts`, before the first export:
+
+```typescript
+const NERDGRAPH_URL = 'https://api.newrelic.com/graphql';
+```
+
+Then add the tool definition:
 
 ```typescript
 export const TEAM_SUMMARY_TOOL = {
@@ -173,7 +262,7 @@ export const TEAM_SUMMARY_TOOL = {
 };
 ```
 
-### 5b — Handler
+### ✅ 5b — Handler
 
 The handler queries NR via NRQL (using the license key as a NerdGraph API key is not ideal — the handler should accept an optional `nrApiKey` field in config or fall back to a graceful error when the team summary requires a User API key).
 
@@ -211,8 +300,10 @@ export async function handleGetTeamSummary(
   const since = options.since ?? '7 days ago';
   const accountId = parseInt(options.accountId, 10);
 
-  const NERDGRAPH_URL = 'https://api.newrelic.com/graphql';
-  const query = `query($accountId: Int!, $nrql: String!) {
+  // NERDGRAPH_URL is a module-level constant — move this declaration to the top of the file,
+  // outside the function, before the TEAM_SUMMARY_TOOL export.
+  // const NERDGRAPH_URL = 'https://api.newrelic.com/graphql';
+  const nerdgraphQuery = `query($accountId: Int!, $nrql: String!) {
     actor { account(id: $accountId) { nrql(query: $nrql) { results } } }
   }`;
 
@@ -220,25 +311,31 @@ export async function handleGetTeamSummary(
     const resp = await fetch(NERDGRAPH_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'API-Key': options.nrApiKey! },
-      body: JSON.stringify({ query, variables: { accountId, nrql } }),
+      body: JSON.stringify({ query: nerdgraphQuery, variables: { accountId, nrql } }),
     });
     const json = await resp.json() as { data?: { actor: { account: { nrql: { results: unknown[] } } } }; errors?: unknown[] };
     return (json.data?.actor.account.nrql.results ?? []) as Array<Record<string, unknown>>;
   }
 
+  // NOTE: NR Metric API stores gauge rollups as metricName.sum/.count/.min/.max.
+  // The actual metric names emitted by CostTracker and EfficiencyScorer are:
+  //   ai.cost.session_total_usd  (not ai.cost.session)
+  //   ai.efficiency.score        (not efficiency.score)
+  // Query the .sum rollup attribute. teamId comes from config (not user input),
+  // but avoid interpolating other user-controlled values into NRQL strings.
   const [costRows, effRows, antiPatternRows] = await Promise.all([
     runNrql(
-      `SELECT developer, sum(numeric(cost.totalUsd)) AS totalCost
-       FROM Metric WHERE metricName = 'ai.cost.session' AND team_id = '${options.teamId}'
+      `SELECT sum(ai.cost.session_total_usd.sum) AS totalCost
+       FROM Metric WHERE team_id = '${options.teamId}'
        SINCE ${since} FACET developer LIMIT 50`,
     ),
     runNrql(
-      `SELECT developer, average(numeric(efficiency.score)) AS avgScore
-       FROM Metric WHERE metricName = 'ai.efficiency.score' AND team_id = '${options.teamId}'
+      `SELECT average(ai.efficiency.score.sum) AS avgScore
+       FROM Metric WHERE team_id = '${options.teamId}'
        SINCE ${since} FACET developer LIMIT 50`,
     ),
     runNrql(
-      `SELECT developer, count(*) AS antiPatterns
+      `SELECT count(*) AS antiPatterns
        FROM AiAntiPattern WHERE team_id = '${options.teamId}'
        SINCE ${since} FACET developer LIMIT 50`,
     ),
@@ -276,15 +373,51 @@ export async function handleGetTeamSummary(
 }
 ```
 
-### 5c — Register the tool
+### ✅ 5c — Register the tool
 
-In `registerTools()` (in `session-stats.ts`), add `TEAM_SUMMARY_TOOL` to the conditionally-registered tools when `options.config?.teamId` is non-null and `options.config?.nrApiKey` is non-null.
+`registerTools()` in `session-stats.ts` does not receive a `config` object — it receives individual options fields. Add two new fields to `ToolRegistrationOptions`:
 
-Add `nrApiKey?: string | null` to `RegisterToolsOptions`.
+```typescript
+teamId?: string | null;
+nrApiKey?: string | null;
+```
+
+In the tool registration block inside `registerTools()`, add after the existing cross-session tool conditionals:
+
+```typescript
+if (options.teamId && options.nrApiKey) {
+  tools.push(TEAM_SUMMARY_TOOL);
+}
+```
+
+In the `CallToolRequestSchema` handler switch, add a new case:
+
+```typescript
+case 'nr_observe_get_team_summary': {
+  if (!options.teamId || !options.nrApiKey) break;
+  const summaryArgs = (args ?? {}) as Record<string, unknown>;
+  return handleGetTeamSummary({
+    teamId: options.teamId,
+    accountId: options.accountId ?? '',
+    nrApiKey: options.nrApiKey,
+    since: summaryArgs.since as string | undefined,
+  });
+}
+```
+
+Note: `accountId` must also be added to `ToolRegistrationOptions` as `accountId?: string`. Pass `config.accountId` from `index.ts` in the `registerTools()` call.
+
+In `index.ts`, pass the new fields in the `registerTools()` call:
+
+```typescript
+teamId: config.teamId,
+nrApiKey: config.nrApiKey,
+accountId: config.accountId,
+```
 
 ---
 
-## Step 6 — Add `NEW_RELIC_API_KEY` to config
+## ✅ Step 6 — Add `NEW_RELIC_API_KEY` to config
 
 In `McpServerConfig`, add:
 
@@ -304,9 +437,9 @@ nrApiKey:
 
 ---
 
-## Step 7 — Create manager dashboard JSON
+## ✅ Step 7 — Create manager dashboard JSON
 
-Create `packages/nr-ai-mcp-server/src/dashboards/ai-coding-assistant-manager-view.json`.
+Create `packages/nr-ai-mcp-server/dashboards/ai-coding-assistant-manager-view.json`.
 
 This dashboard shows team-level cost and efficiency data. It intentionally omits tool-call content and session-level detail.
 
@@ -328,7 +461,7 @@ Structure:
           "rawConfiguration": {
             "nrqlQueries": [{
               "accountIds": [],
-              "query": "SELECT sum(numeric(cost.totalUsd)) AS 'Total Cost (USD)' FROM Metric WHERE metricName = 'ai.cost.session' SINCE 7 days ago"
+              "query": "SELECT sum(ai.cost.session_total_usd.sum) AS 'Total Cost (USD)' FROM Metric SINCE 7 days ago"
             }]
           }
         },
@@ -339,7 +472,7 @@ Structure:
           "rawConfiguration": {
             "nrqlQueries": [{
               "accountIds": [],
-              "query": "SELECT sum(numeric(cost.totalUsd)) FROM Metric WHERE metricName = 'ai.cost.session' SINCE 7 days ago FACET developer"
+              "query": "SELECT sum(ai.cost.session_total_usd.sum) FROM Metric SINCE 7 days ago FACET developer"
             }]
           }
         },
@@ -350,7 +483,7 @@ Structure:
           "rawConfiguration": {
             "nrqlQueries": [{
               "accountIds": [],
-              "query": "SELECT average(numeric(efficiency.score)) FROM Metric WHERE metricName = 'ai.efficiency.score' SINCE 7 days ago FACET developer"
+              "query": "SELECT average(ai.efficiency.score.sum) FROM Metric SINCE 7 days ago FACET developer"
             }]
           }
         },
@@ -361,7 +494,7 @@ Structure:
           "rawConfiguration": {
             "nrqlQueries": [{
               "accountIds": [],
-              "query": "SELECT sum(numeric(cost.totalUsd)) FROM Metric WHERE metricName = 'ai.cost.session' SINCE 30 days ago FACET developer TIMESERIES 1 day"
+              "query": "SELECT sum(ai.cost.session_total_usd.sum) FROM Metric SINCE 30 days ago FACET developer TIMESERIES 1 day"
             }]
           }
         },
@@ -372,7 +505,7 @@ Structure:
           "rawConfiguration": {
             "nrqlQueries": [{
               "accountIds": [],
-              "query": "SELECT average(numeric(efficiency.score)) FROM Metric WHERE metricName = 'ai.efficiency.score' SINCE 30 days ago FACET developer TIMESERIES 1 day"
+              "query": "SELECT average(ai.efficiency.score.sum) FROM Metric SINCE 30 days ago FACET developer TIMESERIES 1 day"
             }]
           }
         },
@@ -404,7 +537,7 @@ Structure:
 }
 ```
 
-Add this dashboard to `deploy-dashboard.ts` so `--all` deploys it.
+No changes to `scripts/deploy-dashboard.ts` are needed. The deploy script uses `readdirSync` to discover all `.json` files in the `dashboards/` directory automatically — dropping the new file there is sufficient for `--all` to include it.
 
 In `dashboard.test.ts`, add:
 
@@ -435,13 +568,46 @@ describe('Manager View dashboard', () => {
 
 ---
 
-## Step 8 — Write tests
+## ✅ Step 8 — Write tests
 
 ### `packages/nr-ai-mcp-server/src/config.test.ts` additions
 
+First, add the four new env var names to the `beforeEach` deletion block:
+
+```typescript
+delete process.env.NEW_RELIC_AI_TEAM_ID;
+delete process.env.NEW_RELIC_AI_PROJECT_ID;
+delete process.env.NEW_RELIC_AI_ORG_ID;
+delete process.env.NEW_RELIC_API_KEY;
+```
+
+Then add these test cases:
+
 - `teamId` loaded from `NEW_RELIC_AI_TEAM_ID=my-team` → `'my-team'`
+- `teamId` defaults to `null` when env var is not set and config file has no `teamId`
 - `projectId` uses config file value when no env var set
-- `projectId` is null when git remote is not available
+- `nrApiKey` loaded from `NEW_RELIC_API_KEY=NRAK-abc` → `'NRAK-abc'`
+- `nrApiKey` is `null` when env var is unset
+
+For the `inferProjectId()` null test: the tests run inside a git repo, so `execSync('git remote get-url origin')` will **succeed** unless mocked. Export `inferProjectId` from `config.ts` (or test it indirectly) and mock `execSync` using `jest.spyOn`:
+
+```typescript
+import * as childProcess from 'node:child_process';
+
+it('projectId is null when git remote throws', () => {
+  jest.spyOn(childProcess, 'execSync').mockImplementation(() => {
+    throw new Error('not a git repo');
+  });
+  const configPath = writeConfigFile({ licenseKey: 'key-123', accountId: '12345' });
+  process.env.NEW_RELIC_LICENSE_KEY = 'key-123';
+  process.env.NEW_RELIC_ACCOUNT_ID = '12345';
+  const config = loadMcpConfig({ config: configPath });
+  expect(config.projectId).toBeNull();
+  jest.restoreAllMocks();
+});
+```
+
+> **Important**: `config.ts` already imports `execSync` as a named import from `node:child_process`. `jest.spyOn` on the module object works only when the module is imported with `import * as`. If the spy approach is unreliable in your test setup, make `inferProjectId` an exported function so it can be tested in isolation without going through `loadMcpConfig`.
 
 ### `packages/nr-ai-mcp-server/src/transport/nr-ingest.test.ts` additions
 
@@ -451,19 +617,19 @@ describe('Manager View dashboard', () => {
 
 ---
 
-## Acceptance criteria
+## ✅ Acceptance criteria
 
-- [ ] `npm run build` passes with no TypeScript errors
-- [ ] `npm test` passes — new tests pass, existing tests not broken
-- [ ] `McpServerConfig` has `teamId`, `projectId`, `orgId`, `nrApiKey` fields (all nullable)
-- [ ] All NR events include `team_id`, `project_id`, `org_id` when the config values are non-null
-- [ ] All NR events omit `team_id`/`project_id`/`org_id` when config values are null (no null-valued attributes)
-- [ ] `inferProjectId()` correctly extracts `org/repo` from HTTPS and SSH remote URLs
-- [ ] `nr_observe_get_team_summary` returns an error message (not a stack trace) when `teamId` is not configured
-- [ ] `nr_observe_get_team_summary` is only registered when `teamId` and `nrApiKey` are both non-null
-- [ ] Manager dashboard JSON validates against the existing `dashboard.test.ts` structural checks
-- [ ] Manager dashboard has no queries referencing `system_prompt`, `last_user_message`, or `response_text`
-- [ ] `npm run lint` passes
+- [x] `npm run build` passes with no TypeScript errors
+- [x] `npm test` passes — new tests pass, existing tests not broken
+- [x] `McpServerConfig` has `teamId`, `projectId`, `orgId`, `nrApiKey` fields (all nullable)
+- [x] All NR events include `team_id`, `project_id`, `org_id` when the config values are non-null
+- [x] All NR events omit `team_id`/`project_id`/`org_id` when config values are null (no null-valued attributes)
+- [x] `inferProjectId()` correctly extracts `org/repo` from HTTPS and SSH remote URLs
+- [x] `nr_observe_get_team_summary` returns an error message (not a stack trace) when `teamId` is not configured
+- [x] `nr_observe_get_team_summary` is only registered when `teamId` and `nrApiKey` are both non-null
+- [x] Manager dashboard JSON validates against the existing `dashboard.test.ts` structural checks
+- [x] Manager dashboard has no queries referencing `system_prompt`, `last_user_message`, or `response_text`
+- [x] `npm run lint` passes
 
 ---
 
@@ -472,7 +638,7 @@ describe('Manager View dashboard', () => {
 Files to **create**:
 
 ```
-packages/nr-ai-mcp-server/src/dashboards/ai-coding-assistant-manager-view.json
+packages/nr-ai-mcp-server/dashboards/ai-coding-assistant-manager-view.json
 ```
 
 Files to **modify**:

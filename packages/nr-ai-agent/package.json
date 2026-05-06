@@ -19,20 +19,35 @@
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "^0.40.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.0.0",
     "@google/genai": "1.49.0",
+    "@mistralai/mistralai": "^1.0.0",
+    "cohere-ai": "^7.0.0",
     "openai": "^4.0.0",
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
     "@anthropic-ai/sdk": ">=0.20.0",
+    "@aws-sdk/client-bedrock-runtime": ">=3.0.0",
     "@google/genai": ">=1.0.0",
+    "@mistralai/mistralai": ">=1.0.0",
+    "cohere-ai": ">=7.0.0",
     "openai": ">=4.0.0"
   },
   "peerDependenciesMeta": {
     "@anthropic-ai/sdk": {
       "optional": true
     },
+    "@aws-sdk/client-bedrock-runtime": {
+      "optional": true
+    },
     "@google/genai": {
+      "optional": true
+    },
+    "@mistralai/mistralai": {
+      "optional": true
+    },
+    "cohere-ai": {
       "optional": true
     },
     "openai": {

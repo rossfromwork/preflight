@@ -31,6 +31,13 @@ beforeEach(() => {
   delete process.env.NEW_RELIC_AI_MCP_PROXY_UPSTREAMS;
   delete process.env.NEW_RELIC_AI_HIGH_SECURITY;
   delete process.env.NEW_RELIC_AI_MODEL;
+  delete process.env.NEW_RELIC_AI_SESSION_BUDGET_USD;
+  delete process.env.NEW_RELIC_AI_DAILY_BUDGET_USD;
+  delete process.env.NEW_RELIC_AI_WEEKLY_BUDGET_USD;
+  delete process.env.NEW_RELIC_AI_TEAM_ID;
+  delete process.env.NEW_RELIC_AI_PROJECT_ID;
+  delete process.env.NEW_RELIC_AI_ORG_ID;
+  delete process.env.NEW_RELIC_API_KEY;
 });
 
 afterEach(() => {
@@ -615,6 +622,66 @@ describe('sanitizeDeveloper() (N-07)', () => {
   });
 });
 
+describe('budget fields', () => {
+  it('budget fields default to null when not configured', () => {
+    process.env.NEW_RELIC_LICENSE_KEY = 'test-key';
+    process.env.NEW_RELIC_ACCOUNT_ID = '12345';
+    const configPath = writeConfigFile({});
+    const config = loadMcpConfig({ config: configPath });
+    expect(config.sessionBudgetUsd).toBeNull();
+    expect(config.dailyBudgetUsd).toBeNull();
+    expect(config.weeklyBudgetUsd).toBeNull();
+  });
+
+  it('loads sessionBudgetUsd from env var', () => {
+    process.env.NEW_RELIC_LICENSE_KEY = 'test-key';
+    process.env.NEW_RELIC_ACCOUNT_ID = '12345';
+    process.env.NEW_RELIC_AI_SESSION_BUDGET_USD = '5.00';
+    const configPath = writeConfigFile({});
+    const config = loadMcpConfig({ config: configPath });
+    expect(config.sessionBudgetUsd).toBe(5.0);
+  });
+
+  it('loads dailyBudgetUsd from config file', () => {
+    process.env.NEW_RELIC_LICENSE_KEY = 'test-key';
+    process.env.NEW_RELIC_ACCOUNT_ID = '12345';
+    const configPath = writeConfigFile({ dailyBudgetUsd: 20 });
+    const config = loadMcpConfig({ config: configPath });
+    expect(config.dailyBudgetUsd).toBe(20);
+  });
+
+  it('env var overrides config file for budget fields', () => {
+    process.env.NEW_RELIC_LICENSE_KEY = 'test-key';
+    process.env.NEW_RELIC_ACCOUNT_ID = '12345';
+    process.env.NEW_RELIC_AI_WEEKLY_BUDGET_USD = '100';
+    const configPath = writeConfigFile({ weeklyBudgetUsd: 50 });
+    const config = loadMcpConfig({ config: configPath });
+    expect(config.weeklyBudgetUsd).toBe(100);
+  });
+
+  it('handles decimal budget values', () => {
+    process.env.NEW_RELIC_LICENSE_KEY = 'test-key';
+    process.env.NEW_RELIC_ACCOUNT_ID = '12345';
+    process.env.NEW_RELIC_AI_SESSION_BUDGET_USD = '12.50';
+    const configPath = writeConfigFile({});
+    const config = loadMcpConfig({ config: configPath });
+    expect(config.sessionBudgetUsd).toBe(12.5);
+  });
+
+  it('treats invalid (non-numeric) budget env var as null', () => {
+    process.env.NEW_RELIC_LICENSE_KEY = 'test-key';
+    process.env.NEW_RELIC_ACCOUNT_ID = '12345';
+    process.env.NEW_RELIC_AI_SESSION_BUDGET_USD = 'abc';
+    process.env.NEW_RELIC_AI_DAILY_BUDGET_USD = 'NaN';
+    process.env.NEW_RELIC_AI_WEEKLY_BUDGET_USD = '-5';
+    const configPath = writeConfigFile({});
+    const config = loadMcpConfig({ config: configPath });
+    expect(config.sessionBudgetUsd).toBeNull();
+    expect(config.dailyBudgetUsd).toBeNull();
+    expect(config.weeklyBudgetUsd).toBeNull();
+  });
+});
+
 describe('developer sanitization via loadMcpConfig() (N-07)', () => {
   it('strips control characters from NEW_RELIC_AI_MCP_DEVELOPER env var', () => {
     process.env.NEW_RELIC_LICENSE_KEY = 'test-key';
@@ -651,5 +718,78 @@ describe('developer sanitization via loadMcpConfig() (N-07)', () => {
     const configPath = writeConfigFile({});
     const config = loadMcpConfig({ config: configPath });
     expect(config.developer).toBe('charlie');
+  });
+
+  it('teamId loaded from NEW_RELIC_AI_TEAM_ID env var', () => {
+    process.env.NEW_RELIC_LICENSE_KEY = 'test-key';
+    process.env.NEW_RELIC_ACCOUNT_ID = '12345';
+    process.env.NEW_RELIC_AI_TEAM_ID = 'my-team';
+    const configPath = writeConfigFile({});
+    const config = loadMcpConfig({ config: configPath });
+    expect(config.teamId).toBe('my-team');
+  });
+
+  it('teamId defaults to null when not set', () => {
+    process.env.NEW_RELIC_LICENSE_KEY = 'test-key';
+    process.env.NEW_RELIC_ACCOUNT_ID = '12345';
+    const configPath = writeConfigFile({});
+    const config = loadMcpConfig({ config: configPath });
+    expect(config.teamId).toBeNull();
+  });
+
+  it('projectId uses config file value when no env var set', () => {
+    process.env.NEW_RELIC_LICENSE_KEY = 'test-key';
+    process.env.NEW_RELIC_ACCOUNT_ID = '12345';
+    const configPath = writeConfigFile({ projectId: 'myorg/myrepo' });
+    const config = loadMcpConfig({ config: configPath });
+    expect(config.projectId).toBe('myorg/myrepo');
+  });
+
+  it('projectId is null when git remote throws', () => {
+    const origDir = process.cwd();
+    try {
+      process.chdir(tmpDir); // non-git directory → git remote get-url origin throws
+      process.env.NEW_RELIC_LICENSE_KEY = 'test-key';
+      process.env.NEW_RELIC_ACCOUNT_ID = '12345';
+      const configPath = writeConfigFile({});
+      const config = loadMcpConfig({ config: configPath });
+      expect(config.projectId).toBeNull();
+    } finally {
+      process.chdir(origDir);
+    }
+  });
+
+  it('orgId loaded from NEW_RELIC_AI_ORG_ID env var', () => {
+    process.env.NEW_RELIC_LICENSE_KEY = 'test-key';
+    process.env.NEW_RELIC_ACCOUNT_ID = '12345';
+    process.env.NEW_RELIC_AI_ORG_ID = 'acme-corp';
+    const configPath = writeConfigFile({});
+    const config = loadMcpConfig({ config: configPath });
+    expect(config.orgId).toBe('acme-corp');
+  });
+
+  it('orgId defaults to null when not set', () => {
+    process.env.NEW_RELIC_LICENSE_KEY = 'test-key';
+    process.env.NEW_RELIC_ACCOUNT_ID = '12345';
+    const configPath = writeConfigFile({});
+    const config = loadMcpConfig({ config: configPath });
+    expect(config.orgId).toBeNull();
+  });
+
+  it('nrApiKey loaded from NEW_RELIC_API_KEY env var', () => {
+    process.env.NEW_RELIC_LICENSE_KEY = 'test-key';
+    process.env.NEW_RELIC_ACCOUNT_ID = '12345';
+    process.env.NEW_RELIC_API_KEY = 'NRAK-abc123';
+    const configPath = writeConfigFile({});
+    const config = loadMcpConfig({ config: configPath });
+    expect(config.nrApiKey).toBe('NRAK-abc123');
+  });
+
+  it('nrApiKey is null when not set', () => {
+    process.env.NEW_RELIC_LICENSE_KEY = 'test-key';
+    process.env.NEW_RELIC_ACCOUNT_ID = '12345';
+    const configPath = writeConfigFile({});
+    const config = loadMcpConfig({ config: configPath });
+    expect(config.nrApiKey).toBeNull();
   });
 });

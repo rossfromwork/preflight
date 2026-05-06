@@ -1,6 +1,9 @@
 import type Anthropic from '@anthropic-ai/sdk';
 import type { GoogleGenAI } from '@google/genai';
 import type OpenAI from 'openai';
+import type { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
+import type { Mistral } from '@mistralai/mistralai';
+import type { CohereClient } from 'cohere-ai';
 import {
   loadConfig,
   createLogger,
@@ -17,6 +20,9 @@ import type { AgentConfig } from '@nr-ai-observatory/shared';
 import { wrapAnthropicClient as wrapAnthropic } from './wrappers/anthropic.js';
 import { wrapGeminiClient as wrapGemini } from './wrappers/gemini.js';
 import { wrapOpenAiClient as wrapOpenAI } from './wrappers/openai.js';
+import { wrapBedrockClient as wrapBedrock } from './wrappers/bedrock.js';
+import { wrapMistralClient as wrapMistral } from './wrappers/mistral.js';
+import { wrapCohereClient as wrapCohere } from './wrappers/cohere.js';
 import type {
   WrapperConfig,
   RecordHandler,
@@ -144,6 +150,36 @@ export class NrAiAgent {
     return wrapGemini(client, this.wrapperConfig, onRecord, onEmbeddingRecord);
   }
 
+  wrapBedrockClient(client: BedrockRuntimeClient): BedrockRuntimeClient {
+    if (!this.config.enabled) return client;
+
+    const onRecord: RecordHandler = (record) => {
+      this.ingestRequestRecord(record);
+    };
+
+    return wrapBedrock(client, this.wrapperConfig, onRecord);
+  }
+
+  wrapMistralClient(client: Mistral): Mistral {
+    if (!this.config.enabled) return client;
+
+    const onRecord: RecordHandler = (record) => {
+      this.ingestRequestRecord(record);
+    };
+
+    return wrapMistral(client, this.wrapperConfig, onRecord);
+  }
+
+  wrapCohereClient(client: CohereClient): CohereClient {
+    if (!this.config.enabled) return client;
+
+    const onRecord: RecordHandler = (record) => {
+      this.ingestRequestRecord(record);
+    };
+
+    return wrapCohere(client, this.wrapperConfig, onRecord);
+  }
+
   async shutdown(): Promise<void> {
     if (this.scheduler) {
       await this.scheduler.stop();
@@ -268,12 +304,25 @@ export class NrAiAgent {
 
 function resolveRequestMethod(
   record: AiRequestRecord,
-): 'messages.create' | 'messages.stream' | 'models.generateContent' | 'models.generateContentStream' | 'chat.completions.create' {
+): 'messages.create' | 'messages.stream' | 'models.generateContent' | 'models.generateContentStream' | 'chat.completions.create' | 'converse' | 'converse-stream' | 'chat.complete' | 'chat.stream' | 'chat' | 'chatStream' {
   if (record.provider === 'anthropic') {
     return record.streaming ? 'messages.stream' : 'messages.create';
   }
   if (record.provider === 'openai') {
     return 'chat.completions.create';
   }
+  if (record.provider === 'bedrock') {
+    return record.streaming ? 'converse-stream' : 'converse';
+  }
+  if (record.provider === 'mistral') {
+    return record.streaming ? 'chat.stream' : 'chat.complete';
+  }
+  if (record.provider === 'cohere') {
+    return record.streaming ? 'chatStream' : 'chat';
+  }
   return record.streaming ? 'models.generateContentStream' : 'models.generateContent';
 }
+
+export { wrapBedrockClient } from './wrappers/bedrock.js';
+export { wrapMistralClient } from './wrappers/mistral.js';
+export { wrapCohereClient } from './wrappers/cohere.js';

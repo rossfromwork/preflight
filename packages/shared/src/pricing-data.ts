@@ -142,4 +142,114 @@ export const DEFAULT_PRICING_TABLE: Record<string, ModelPricing> = {
     outputPerMTok: 1.5,
     contextWindow: 16_385,
   },
+
+  // ---- AWS Bedrock (Converse API pricing for on-demand) ----
+  // Claude models via Bedrock cross-region inference
+  'anthropic.claude-3-5-sonnet-20241022-v2:0': {
+    inputPerMTok: 3,
+    outputPerMTok: 15,
+    contextWindow: 200_000,
+  },
+  'anthropic.claude-3-5-haiku-20241022-v1:0': {
+    inputPerMTok: 0.8,
+    outputPerMTok: 4,
+    contextWindow: 200_000,
+  },
+  'anthropic.claude-3-opus-20240229-v1:0': {
+    inputPerMTok: 15,
+    outputPerMTok: 75,
+    contextWindow: 200_000,
+  },
+  // Meta Llama via Bedrock
+  'meta.llama3-70b-instruct-v1:0': {
+    inputPerMTok: 0.99,
+    outputPerMTok: 0.99,
+    contextWindow: 128_000,
+  },
+  'meta.llama3-8b-instruct-v1:0': {
+    inputPerMTok: 0.3,
+    outputPerMTok: 0.6,
+    contextWindow: 128_000,
+  },
+  // Mistral via Bedrock
+  'mistral.mistral-large-2402-v1:0': {
+    inputPerMTok: 4,
+    outputPerMTok: 12,
+    contextWindow: 32_000,
+  },
+  'mistral.mistral-small-2402-v1:0': {
+    inputPerMTok: 1,
+    outputPerMTok: 3,
+    contextWindow: 32_000,
+  },
+  // Amazon Nova
+  'amazon.nova-pro-v1:0': {
+    inputPerMTok: 0.8,
+    outputPerMTok: 3.2,
+    contextWindow: 300_000,
+  },
+  'amazon.nova-lite-v1:0': {
+    inputPerMTok: 0.06,
+    outputPerMTok: 0.24,
+    contextWindow: 300_000,
+  },
+  'amazon.nova-micro-v1:0': {
+    inputPerMTok: 0.035,
+    outputPerMTok: 0.14,
+    contextWindow: 128_000,
+  },
+
+  // ---- Mistral ----
+  'mistral-large-latest': {
+    inputPerMTok: 2,
+    outputPerMTok: 6,
+    contextWindow: 131_000,
+  },
+  'mistral-small-latest': {
+    inputPerMTok: 0.1,
+    outputPerMTok: 0.3,
+    contextWindow: 131_000,
+  },
+  'mistral-nemo': {
+    inputPerMTok: 0.15,
+    outputPerMTok: 0.15,
+    contextWindow: 131_000,
+  },
+  'open-mistral-7b': {
+    inputPerMTok: 0.25,
+    outputPerMTok: 0.25,
+    contextWindow: 32_000,
+  },
+  'open-mixtral-8x7b': {
+    inputPerMTok: 0.7,
+    outputPerMTok: 0.7,
+    contextWindow: 32_000,
+  },
+  'codestral-latest': {
+    inputPerMTok: 0.2,
+    outputPerMTok: 0.6,
+    contextWindow: 256_000,
+  },
+
+  // ---- Cohere ----
+  'command-r-plus': {
+    inputPerMTok: 2.5,
+    outputPerMTok: 10,
+    contextWindow: 128_000,
+  },
+  'command-r': {
+    inputPerMTok: 0.15,
+    outputPerMTok: 0.6,
+    contextWindow: 128_000,
+  },
+  'command': {
+    inputPerMTok: 0.5,
+    outputPerMTok: 1.5,
+    contextWindow: 4_000,
+  },
+  'command-light': {
+    inputPerMTok: 0.3,
+    outputPerMTok: 0.6,
+    contextWindow: 4_000,
+  },
 };

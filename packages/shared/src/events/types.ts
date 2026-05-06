@@ -1,4 +1,4 @@
-export type AiProvider = 'anthropic' | 'google' | 'openai';
+export type AiProvider = 'anthropic' | 'google' | 'openai' | 'bedrock' | 'mistral' | 'cohere';
 
 export type AiRequestMethod =
   | 'messages.create'
@@ -6,7 +6,13 @@ export type AiRequestMethod =
   | 'models.generateContent'
   | 'models.generateContentStream'
   | 'models.embedContent'
-  | 'chat.completions.create';
+  | 'chat.completions.create'
+  | 'converse'
+  | 'converse-stream'
+  | 'chat.complete'
+  | 'chat.stream'
+  | 'chat'
+  | 'chatStream';
 
 export interface AiRequest {
   id: string;

@@ -14,6 +14,9 @@ export interface McpServerConfig {
   readonly accountId: string;
   readonly appName: string;
   readonly developer: string;
+  readonly teamId: string | null;
+  readonly projectId: string | null;
+  readonly orgId: string | null;
   readonly model: string;
   readonly enabled: boolean;
   readonly highSecurity: boolean;
@@ -22,10 +25,17 @@ export interface McpServerConfig {
   readonly hookBufferPath: string;
   readonly storagePath: string;
   readonly harvestIntervalMs: { readonly events: number; readonly metrics: number };
+  readonly sessionBudgetUsd: number | null;
+  readonly dailyBudgetUsd: number | null;
+  readonly weeklyBudgetUsd: number | null;
   readonly port: number;
   readonly logLevel: LogLevel;
   readonly collectorHost: string | null;
   readonly proxyUpstreams: readonly UpstreamConfig[];
+  readonly nrApiKey: string | null;
+  readonly digestWebhookUrl: string | null;
+  readonly digestSchedule: string; // cron expression, default: "0 9 * * 1" (Monday 9am)
+  readonly retainSessionsDays: number | null;
 }
 
 const DEFAULT_STORAGE_PATH = resolve(homedir(), '.nr-ai-observe');
@@ -46,6 +56,12 @@ export function sanitizeDeveloper(raw: string): string {
   return raw.replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, 128) || 'unknown';
 }
 
+function sanitizeOrgField(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const sanitized = value.replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, 128);
+  return sanitized || null;
+}
+
 function inferDeveloper(): string {
   if (process.env.USER) return sanitizeDeveloper(process.env.USER);
   if (process.env.USERNAME) return sanitizeDeveloper(process.env.USERNAME);
@@ -53,6 +69,22 @@ function inferDeveloper(): string {
     return sanitizeDeveloper(execSync('git config user.name', { encoding: 'utf-8', timeout: 2000 }).trim());
   } catch {
     return 'unknown';
+  }
+}
+
+function inferProjectId(): string | null {
+  try {
+    const remote = execSync('git remote get-url origin', {
+      encoding: 'utf-8',
+      timeout: 2000,
+    }).trim();
+    // Extract "org/repo" from HTTPS or SSH remotes:
+    // https://github.com/org/repo.git  → org/repo
+    // git@github.com:org/repo.git      → org/repo
+    const match = remote.match(/[/:]([\w.-]+\/[\w.-]+?)(?:\.git)?$/);
+    return match ? match[1] : null;
+  } catch {
+    return null;
   }
 }
 
@@ -218,6 +250,21 @@ export function loadMcpConfig(cliOptions?: Partial<CliOptions>): Readonly<McpSer
       (typeof file.developer === 'string' ? file.developer : inferDeveloper()),
     ),
 
+    teamId: sanitizeOrgField(
+      process.env.NEW_RELIC_AI_TEAM_ID ??
+      (typeof file.teamId === 'string' ? file.teamId : null),
+    ),
+
+    projectId: sanitizeOrgField(
+      process.env.NEW_RELIC_AI_PROJECT_ID ??
+      (typeof file.projectId === 'string' ? file.projectId : inferProjectId()),
+    ),
+
+    orgId: sanitizeOrgField(
+      process.env.NEW_RELIC_AI_ORG_ID ??
+      (typeof file.orgId === 'string' ? file.orgId : null),
+    ),
+
     enabled:
       envBool('NEW_RELIC_AI_MCP_ENABLED', typeof file.enabled === 'boolean' ? file.enabled : true),
 
@@ -252,6 +299,24 @@ export function loadMcpConfig(cliOptions?: Partial<CliOptions>): Readonly<McpSer
       ),
     },
 
+    sessionBudgetUsd: (() => {
+      const raw = process.env.NEW_RELIC_AI_SESSION_BUDGET_USD;
+      if (raw) { const v = parseFloat(raw); if (Number.isFinite(v) && v > 0) return v; }
+      return typeof file.sessionBudgetUsd === 'number' ? file.sessionBudgetUsd : null;
+    })(),
+
+    dailyBudgetUsd: (() => {
+      const raw = process.env.NEW_RELIC_AI_DAILY_BUDGET_USD;
+      if (raw) { const v = parseFloat(raw); if (Number.isFinite(v) && v > 0) return v; }
+      return typeof file.dailyBudgetUsd === 'number' ? file.dailyBudgetUsd : null;
+    })(),
+
+    weeklyBudgetUsd: (() => {
+      const raw = process.env.NEW_RELIC_AI_WEEKLY_BUDGET_USD;
+      if (raw) { const v = parseFloat(raw); if (Number.isFinite(v) && v > 0) return v; }
+      return typeof file.weeklyBudgetUsd === 'number' ? file.weeklyBudgetUsd : null;
+    })(),
+
     port: cliOptions?.port ?? envInt(
       'NEW_RELIC_AI_MCP_PORT',
       typeof file.port === 'number' ? file.port : 9847,
@@ -276,17 +341,44 @@ export function loadMcpConfig(cliOptions?: Partial<CliOptions>): Readonly<McpSer
       process.env.NEW_RELIC_AI_MCP_PROXY_UPSTREAMS,
       file.proxyUpstreams,
     ),
+
+    nrApiKey:
+      process.env.NEW_RELIC_API_KEY ??
+      (typeof file.nrApiKey === 'string' ? file.nrApiKey : null),
+
+    digestWebhookUrl:
+      process.env.NEW_RELIC_AI_DIGEST_WEBHOOK_URL ??
+      (typeof file.digestWebhookUrl === 'string' ? file.digestWebhookUrl : null),
+
+    digestSchedule:
+      process.env.NEW_RELIC_AI_DIGEST_SCHEDULE ??
+      (typeof file.digestSchedule === 'string' ? file.digestSchedule : '0 9 * * 1'),
+
+    retainSessionsDays: (() => {
+      const raw = process.env.NEW_RELIC_AI_RETAIN_SESSIONS_DAYS;
+      if (raw) {
+        const v = parseInt(raw, 10);
+        if (Number.isFinite(v) && v > 0) return v;
+      }
+      return typeof file.retainSessionsDays === 'number' ? file.retainSessionsDays : null;
+    })(),
   };
 
   logger.debug('Configuration loaded', {
     appName: config.appName,
     developer: config.developer,
+    teamId: config.teamId,
+    projectId: config.projectId,
+    orgId: config.orgId,
     enabled: config.enabled,
     highSecurity: config.highSecurity,
     recordContent: config.recordContent,
     storagePath: config.storagePath,
     port: config.port,
     collectorHost: config.collectorHost ?? 'us (default)',
+    sessionBudgetUsd: config.sessionBudgetUsd,
+    dailyBudgetUsd: config.dailyBudgetUsd,
+    weeklyBudgetUsd: config.weeklyBudgetUsd,
   });
 
   return Object.freeze(config);

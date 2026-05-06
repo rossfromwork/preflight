@@ -14,7 +14,7 @@ Read these files end-to-end before starting:
 - `packages/nr-ai-mcp-server/src/metrics/cost-tracker.ts` — shows how a tracker maintains running state
 - `packages/nr-ai-mcp-server/src/metrics/task-detector.ts` — `AiCodingTask` type; used by TaskCompletionTracker
 - `packages/nr-ai-mcp-server/src/storage/types.ts` — `ToolCallRecord` type
-- `packages/nr-ai-mcp-server/src/tools/session-stats.ts` — `registerTools()` and `RegisterToolsOptions`; all new tools register here
+- `packages/nr-ai-mcp-server/src/tools/session-stats.ts` — `registerTools()` and `ToolRegistrationOptions`; all new tools register here
 - `packages/nr-ai-mcp-server/src/transport/nr-ingest.ts` — how to emit new event/metric types
 
 ---
@@ -25,12 +25,12 @@ Four new tracker classes, each following the `recordToolCall → getMetrics → 
 
 1. **ContextWindowTracker** — measures repeated-read ratio as a proxy for context waste
 2. **LatencyTracker** — p50/p95/p99 per tool type and per session
-3. **TaskCompletionTracker** — task lifecycle ratios (completed vs. abandoned vs. in-progress)
+3. **TaskCompletionTracker** — task lifecycle ratios (completed vs. in-progress)
 4. **ModelUsageTracker** — which model per request, cost-efficiency per model
 
 ---
 
-## Tracker 1: ContextWindowTracker
+## ✅ Tracker 1: ContextWindowTracker
 
 ### File: `packages/nr-ai-mcp-server/src/metrics/context-window-tracker.ts`
 
@@ -58,8 +58,8 @@ export class ContextWindowTracker {
   recordToolCall(record: ToolCallRecord): void {
     // Only track Read operations that have a filePath
     if (record.toolName !== 'Read' || !record.filePath) return;
-    const count = this.fileReadCounts.get(record.filePath) ?? 0;
-    this.fileReadCounts.set(record.filePath, count + 1);
+    const count = this.fileReadCounts.get(record.filePath as string) ?? 0;
+    this.fileReadCounts.set(record.filePath as string, count + 1);
   }
 
   getMetrics(): ContextWindowMetrics {
@@ -103,24 +103,43 @@ Tool name: `nr_observe_get_context_efficiency`
 
 Description: `"Get context window efficiency metrics: unique vs. repeated file reads, repeated-read ratio, and top re-read files. A high ratio suggests the model is losing context."`
 
-Handler:
+Handler (goes in `analytics-tools.ts`):
 
 ```typescript
 export function handleGetContextEfficiency(
   tracker: ContextWindowTracker,
 ): { content: Array<{ type: 'text'; text: string }> } {
-  return { content: [{ type: 'text', text: JSON.stringify(tracker.getMetrics()) }] };
+  return { content: [{ type: 'text' as const, text: JSON.stringify(tracker.getMetrics(), null, 2) }] };
 }
 ```
 
 #### Tests (`context-window-tracker.test.ts`)
 
 ```typescript
+import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { ContextWindowTracker } from './context-window-tracker.js';
+import type { ToolCallRecord } from '../storage/types.js';
+
+let stderrSpy: ReturnType<typeof jest.spyOn>;
+
+beforeEach(() => {
+  stderrSpy = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+});
+
+afterEach(() => {
+  stderrSpy.mockRestore();
+});
+
 describe('ContextWindowTracker', () => {
   function makeRecord(overrides: Partial<ToolCallRecord> = {}): ToolCallRecord {
     return {
-      id: 'r1', sessionId: 's1', toolName: 'Read', timestamp: Date.now(),
-      durationMs: 10, success: true, platform: 'test',
+      id: 'r1',
+      sessionId: 's1',
+      toolUseId: 'u1',
+      toolName: 'Read',
+      timestamp: Date.now(),
+      durationMs: 10,
+      success: true,
       filePath: '/src/app.ts',
       ...overrides,
     } as ToolCallRecord;
@@ -181,7 +200,7 @@ describe('ContextWindowTracker', () => {
 
 ---
 
-## Tracker 2: LatencyTracker
+## ✅ Tracker 2: LatencyTracker
 
 ### File: `packages/nr-ai-mcp-server/src/metrics/latency-tracker.ts`
 
@@ -248,7 +267,7 @@ export class LatencyTracker {
       toolName: key,
       durationMs: d,
       timestamp: record.timestamp ?? Date.now(),
-      ...(record.filePath && { filePath: record.filePath }),
+      ...(record.filePath && { filePath: record.filePath as string }),
     });
     this.slowestCalls.sort((a, b) => b.durationMs - a.durationMs);
     if (this.slowestCalls.length > MAX_SLOWEST) {
@@ -299,37 +318,153 @@ Tool name: `nr_observe_get_latency_percentiles`
 
 Description: `"Get p50/p95/p99 latency percentiles for tool calls, broken down by tool type. Use to identify which tools are slowest in the current session."`
 
+Handler (goes in `analytics-tools.ts`):
+
+```typescript
+export function handleGetLatencyPercentiles(
+  tracker: LatencyTracker,
+): { content: Array<{ type: 'text'; text: string }> } {
+  return { content: [{ type: 'text' as const, text: JSON.stringify(tracker.getMetrics(), null, 2) }] };
+}
+```
+
 #### Tests (`latency-tracker.test.ts`)
 
-Key cases:
-- Empty tracker → `overall` is null
-- Single call → p50/p95/p99 all equal the single duration
-- Multiple calls → p50 is the median
-- `reset()` clears everything
-- Calls without `durationMs` are ignored
-- `slowestCalls` is sorted descending by duration, capped at 10
-- Per-tool breakdown uses tool-specific samples
+```typescript
+import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { LatencyTracker } from './latency-tracker.js';
+import type { ToolCallRecord } from '../storage/types.js';
+
+let stderrSpy: ReturnType<typeof jest.spyOn>;
+
+beforeEach(() => {
+  stderrSpy = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+});
+
+afterEach(() => {
+  stderrSpy.mockRestore();
+});
+
+describe('LatencyTracker', () => {
+  function makeRecord(overrides: Partial<ToolCallRecord> = {}): ToolCallRecord {
+    return {
+      id: 'r1',
+      sessionId: 's1',
+      toolUseId: 'u1',
+      toolName: 'Read',
+      timestamp: 1000,
+      durationMs: 100,
+      success: true,
+      ...overrides,
+    } as ToolCallRecord;
+  }
+
+  it('returns null overall for empty tracker', () => {
+    const t = new LatencyTracker();
+    expect(t.getMetrics().overall).toBeNull();
+  });
+
+  it('single call sets p50/p95/p99 to that duration', () => {
+    const t = new LatencyTracker();
+    t.recordToolCall(makeRecord({ durationMs: 200 }));
+    const m = t.getMetrics();
+    expect(m.overall?.p50).toBe(200);
+    expect(m.overall?.p95).toBe(200);
+    expect(m.overall?.p99).toBe(200);
+    expect(m.overall?.count).toBe(1);
+    expect(m.overall?.min).toBe(200);
+    expect(m.overall?.max).toBe(200);
+  });
+
+  it('ignores calls with null durationMs', () => {
+    const t = new LatencyTracker();
+    t.recordToolCall(makeRecord({ durationMs: null as unknown as number }));
+    expect(t.getMetrics().overall).toBeNull();
+  });
+
+  it('ignores calls with undefined durationMs', () => {
+    const t = new LatencyTracker();
+    t.recordToolCall(makeRecord({ durationMs: undefined as unknown as number }));
+    expect(t.getMetrics().overall).toBeNull();
+  });
+
+  it('multiple calls produce correct p50', () => {
+    const t = new LatencyTracker();
+    // sorted: [100, 200, 300, 400, 500] → p50 = index floor(5 * 0.5) = 2 → 300
+    for (const d of [300, 100, 500, 200, 400]) {
+      t.recordToolCall(makeRecord({ durationMs: d }));
+    }
+    const m = t.getMetrics();
+    expect(m.overall?.p50).toBe(300);
+    expect(m.overall?.min).toBe(100);
+    expect(m.overall?.max).toBe(500);
+    expect(m.overall?.count).toBe(5);
+  });
+
+  it('byTool breakdown uses tool-specific samples', () => {
+    const t = new LatencyTracker();
+    t.recordToolCall(makeRecord({ toolName: 'Read', durationMs: 50 }));
+    t.recordToolCall(makeRecord({ toolName: 'Bash', durationMs: 500 }));
+    const m = t.getMetrics();
+    expect(m.byTool['Read']?.p50).toBe(50);
+    expect(m.byTool['Bash']?.p50).toBe(500);
+    expect(m.byTool['Read']?.count).toBe(1);
+  });
+
+  it('slowestCalls is sorted descending by duration', () => {
+    const t = new LatencyTracker();
+    t.recordToolCall(makeRecord({ durationMs: 100 }));
+    t.recordToolCall(makeRecord({ durationMs: 500 }));
+    t.recordToolCall(makeRecord({ durationMs: 250 }));
+    const { slowestCalls } = t.getMetrics();
+    expect(slowestCalls[0].durationMs).toBe(500);
+    expect(slowestCalls[1].durationMs).toBe(250);
+    expect(slowestCalls[2].durationMs).toBe(100);
+  });
+
+  it('slowestCalls is capped at 10 entries', () => {
+    const t = new LatencyTracker();
+    for (let i = 1; i <= 15; i++) {
+      t.recordToolCall(makeRecord({ durationMs: i * 10 }));
+    }
+    const { slowestCalls } = t.getMetrics();
+    expect(slowestCalls).toHaveLength(10);
+    expect(slowestCalls[0].durationMs).toBe(150);
+    expect(slowestCalls[9].durationMs).toBe(60);
+  });
+
+  it('slowestCalls includes filePath when present', () => {
+    const t = new LatencyTracker();
+    t.recordToolCall(makeRecord({ durationMs: 200, filePath: '/src/app.ts' }));
+    expect(t.getMetrics().slowestCalls[0].filePath).toBe('/src/app.ts');
+  });
+
+  it('reset clears all state', () => {
+    const t = new LatencyTracker();
+    t.recordToolCall(makeRecord({ durationMs: 100 }));
+    t.reset('new-session');
+    expect(t.getMetrics().overall).toBeNull();
+    expect(Object.keys(t.getMetrics().byTool)).toHaveLength(0);
+    expect(t.getMetrics().slowestCalls).toHaveLength(0);
+  });
+});
+```
 
 ---
 
-## Tracker 3: TaskCompletionTracker
+## ✅ Tracker 3: TaskCompletionTracker
 
 ### File: `packages/nr-ai-mcp-server/src/metrics/task-completion-tracker.ts`
 
-Tracks the lifecycle of tasks detected by `TaskDetector`. Receives `AiCodingTask` objects and categorizes them.
+Tracks the lifecycle of tasks detected by `TaskDetector`. Receives completed `AiCodingTask` objects from `drainNewlyCompletedTasks()`.
 
-#### Background
-
-Read `packages/nr-ai-mcp-server/src/metrics/task-detector.ts` to understand the `AiCodingTask` interface and the `status` field values (`'completed'`, `'in_progress'`).
+**Important:** `AiCodingTask` has no `status` field. Tasks passed to `recordTask()` are always completed tasks — they come from `taskDetector.drainNewlyCompletedTasks()`. The `inProgressTasks` count is derived from `TaskDetector.getMetrics().currentTaskActive` in the tool handler, not stored in this tracker.
 
 #### Interfaces
 
 ```typescript
 export interface TaskCompletionMetrics {
-  readonly totalTasksDetected: number;
   readonly completedTasks: number;
-  readonly inProgressTasks: number;
-  readonly completionRate: number | null; // completed / (completed + inProgress)
   readonly avgTaskDurationMs: number | null;
   readonly avgToolCallsPerTask: number | null;
 }
@@ -340,22 +475,13 @@ export interface TaskCompletionMetrics {
 ```typescript
 export class TaskCompletionTracker {
   private completed: AiCodingTask[] = [];
-  private inProgress: AiCodingTask[] = [];
 
   recordTask(task: AiCodingTask): void {
-    if (task.status === 'completed') {
-      this.completed.push(task);
-    } else {
-      this.inProgress.push(task);
-    }
+    this.completed.push(task);
   }
 
   getMetrics(): TaskCompletionMetrics {
-    const totalTasksDetected = this.completed.length + this.inProgress.length;
     const completedCount = this.completed.length;
-    const inProgressCount = this.inProgress.length;
-    const completionRate =
-      totalTasksDetected > 0 ? completedCount / totalTasksDetected : null;
 
     const completedDurations = this.completed
       .map(t => t.durationMs)
@@ -365,19 +491,13 @@ export class TaskCompletionTracker {
         ? completedDurations.reduce((s, d) => s + d, 0) / completedDurations.length
         : null;
 
-    const allToolCounts = [...this.completed, ...this.inProgress].map(
-      t => t.toolCalls.length,
-    );
     const avgToolCallsPerTask =
-      allToolCounts.length > 0
-        ? allToolCounts.reduce((s, c) => s + c, 0) / allToolCounts.length
+      completedCount > 0
+        ? this.completed.reduce((s, t) => s + t.toolCallCount, 0) / completedCount
         : null;
 
     return {
-      totalTasksDetected,
       completedTasks: completedCount,
-      inProgressTasks: inProgressCount,
-      completionRate,
       avgTaskDurationMs,
       avgToolCallsPerTask,
     };
@@ -385,12 +505,9 @@ export class TaskCompletionTracker {
 
   reset(_sessionId: string): void {
     this.completed = [];
-    this.inProgress = [];
   }
 }
 ```
-
-> **Wiring note:** `TaskCompletionTracker.recordTask()` takes an `AiCodingTask`, not a `ToolCallRecord`. In `index.ts`, call it inside the `for (const task of taskDetector.drainNewlyCompletedTasks())` loop and also pass all current in-progress tasks on each `getMetrics()` call. Alternatively, expose a `snapshot()` method on `TaskDetector` to get current in-progress tasks.
 
 #### MCP tool
 
@@ -398,27 +515,125 @@ Tool name: `nr_observe_get_task_completion_rate`
 
 Description: `"Get task lifecycle metrics: completion rate, average task duration, and average tool calls per task. Distinguishes completed tasks from in-progress/abandoned."`
 
+Handler (goes in `analytics-tools.ts`). It accepts an optional `taskDetector` to compute `inProgressTasks` and `completionRate` at query time:
+
+```typescript
+export function handleGetTaskCompletionRate(
+  tracker: TaskCompletionTracker,
+  taskDetector?: TaskDetector,
+): { content: Array<{ type: 'text'; text: string }> } {
+  const metrics = tracker.getMetrics();
+  const inProgressTasks = taskDetector?.getMetrics().currentTaskActive ? 1 : 0;
+  const totalTasksDetected = metrics.completedTasks + inProgressTasks;
+  const completionRate = totalTasksDetected > 0 ? metrics.completedTasks / totalTasksDetected : null;
+  return {
+    content: [{
+      type: 'text' as const,
+      text: JSON.stringify(
+        { ...metrics, inProgressTasks, totalTasksDetected, completionRate },
+        null,
+        2,
+      ),
+    }],
+  };
+}
+```
+
 #### Tests (`task-completion-tracker.test.ts`)
 
-Key cases:
-- Empty tracker → `completionRate` is null
-- All completed → `completionRate === 1`
-- Mix of completed and in-progress → correct ratio
-- `avgTaskDurationMs` is the mean of completed task durations
-- `reset()` clears all state
-- Tasks with null durationMs are excluded from avg calculation
+```typescript
+import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { TaskCompletionTracker } from './task-completion-tracker.js';
+import type { AiCodingTask } from './task-detector.js';
+
+let stderrSpy: ReturnType<typeof jest.spyOn>;
+
+beforeEach(() => {
+  stderrSpy = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+});
+
+afterEach(() => {
+  stderrSpy.mockRestore();
+});
+
+function makeTask(overrides?: Partial<AiCodingTask>): AiCodingTask {
+  return {
+    taskId: 'task-001',
+    startTime: 1000,
+    endTime: 61000,
+    durationMs: 60000,
+    toolCallCount: 10,
+    toolCallsByType: {},
+    filesRead: [],
+    filesModified: [],
+    linesChanged: 50,
+    linesAdded: 50,
+    linesRemoved: 0,
+    bashCommandsRun: 2,
+    testsRun: 4,
+    testsPassed: 4,
+    buildRun: 1,
+    buildPassed: 1,
+    estimatedCostUsd: 0.50,
+    tokensUsed: 5000,
+    askedUserQuestions: 0,
+    subAgentsSpawned: 0,
+    toolCalls: [],
+    ...overrides,
+  };
+}
+
+describe('TaskCompletionTracker', () => {
+  it('returns zero completedTasks and null avgs for empty tracker', () => {
+    const t = new TaskCompletionTracker();
+    const m = t.getMetrics();
+    expect(m.completedTasks).toBe(0);
+    expect(m.avgTaskDurationMs).toBeNull();
+    expect(m.avgToolCallsPerTask).toBeNull();
+  });
+
+  it('counts completed tasks correctly', () => {
+    const t = new TaskCompletionTracker();
+    t.recordTask(makeTask());
+    t.recordTask(makeTask({ taskId: 'task-002' }));
+    expect(t.getMetrics().completedTasks).toBe(2);
+  });
+
+  it('avgTaskDurationMs is the mean of completed task durations', () => {
+    const t = new TaskCompletionTracker();
+    t.recordTask(makeTask({ durationMs: 10000 }));
+    t.recordTask(makeTask({ durationMs: 20000 }));
+    expect(t.getMetrics().avgTaskDurationMs).toBe(15000);
+  });
+
+  it('avgToolCallsPerTask uses toolCallCount', () => {
+    const t = new TaskCompletionTracker();
+    t.recordTask(makeTask({ toolCallCount: 4 }));
+    t.recordTask(makeTask({ toolCallCount: 6 }));
+    expect(t.getMetrics().avgToolCallsPerTask).toBe(5);
+  });
+
+  it('reset clears all state', () => {
+    const t = new TaskCompletionTracker();
+    t.recordTask(makeTask());
+    t.reset('new-session');
+    const m = t.getMetrics();
+    expect(m.completedTasks).toBe(0);
+    expect(m.avgTaskDurationMs).toBeNull();
+    expect(m.avgToolCallsPerTask).toBeNull();
+  });
+});
+```
 
 ---
 
-## Tracker 4: ModelUsageTracker
+## ✅ Tracker 4: ModelUsageTracker
 
 ### File: `packages/nr-ai-mcp-server/src/metrics/model-usage-tracker.ts`
 
 Tracks which model is used per request (from `nr_observe_report_tokens` calls) and computes cost-per-output-token as an efficiency ratio.
 
-#### Background
-
-`CostTracker` already tracks `costByModel`. `ModelUsageTracker` adds request count, token distribution, and efficiency ratios per model.
+**Note:** `CostTracker` already tracks `costByModel`. `ModelUsageTracker` adds request count, token distribution, and efficiency ratios per model. Its `recordUsage()` is called from `handleReportTokens()` in `cost-tools.ts`.
 
 #### Interfaces
 
@@ -521,33 +736,236 @@ export class ModelUsageTracker {
 }
 ```
 
-#### Wiring note
-
-`ModelUsageTracker.recordUsage()` is called from the `nr_observe_report_tokens` tool handler (in `cost-tools.ts`), where model, token counts, and cost are already available from `CostTracker.recordTokens()`. Add the call there.
-
 #### MCP tool
 
 Tool name: `nr_observe_get_model_usage`
 
 Description: `"Get per-model usage statistics: request counts, token totals, cost, and cost-per-output-token efficiency ratios. Identifies the most-used and most cost-efficient model."`
 
+Handler (goes in `analytics-tools.ts`):
+
+```typescript
+export function handleGetModelUsage(
+  tracker: ModelUsageTracker,
+): { content: Array<{ type: 'text'; text: string }> } {
+  return { content: [{ type: 'text' as const, text: JSON.stringify(tracker.getMetrics(), null, 2) }] };
+}
+```
+
 #### Tests (`model-usage-tracker.test.ts`)
 
-Key cases:
-- Empty tracker → `totalModelsUsed === 0`, `mostUsedModel === null`
-- Single model → correct request count and token totals
-- Multiple models → `mostUsedModel` is the one with highest requestCount
-- `mostEfficientModel` is the one with lowest costPerOutputToken
-- `reset()` clears all state
-- Model with zero output tokens → `costPerOutputToken` is null (avoid division by zero)
+```typescript
+import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { ModelUsageTracker } from './model-usage-tracker.js';
+
+let stderrSpy: ReturnType<typeof jest.spyOn>;
+
+beforeEach(() => {
+  stderrSpy = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+});
+
+afterEach(() => {
+  stderrSpy.mockRestore();
+});
+
+describe('ModelUsageTracker', () => {
+  it('returns empty state for new tracker', () => {
+    const t = new ModelUsageTracker();
+    const m = t.getMetrics();
+    expect(m.totalModelsUsed).toBe(0);
+    expect(m.mostUsedModel).toBeNull();
+    expect(m.mostEfficientModel).toBeNull();
+    expect(m.byModel).toEqual({});
+  });
+
+  it('tracks a single model correctly', () => {
+    const t = new ModelUsageTracker();
+    t.recordUsage('claude-haiku-4', 1000, 500, 0.01);
+    const m = t.getMetrics();
+    expect(m.totalModelsUsed).toBe(1);
+    expect(m.mostUsedModel).toBe('claude-haiku-4');
+    expect(m.byModel['claude-haiku-4']?.requestCount).toBe(1);
+    expect(m.byModel['claude-haiku-4']?.totalInputTokens).toBe(1000);
+    expect(m.byModel['claude-haiku-4']?.totalOutputTokens).toBe(500);
+    expect(m.byModel['claude-haiku-4']?.totalCostUsd).toBeCloseTo(0.01);
+  });
+
+  it('accumulates multiple calls to the same model', () => {
+    const t = new ModelUsageTracker();
+    t.recordUsage('claude-haiku-4', 1000, 500, 0.01);
+    t.recordUsage('claude-haiku-4', 2000, 800, 0.02);
+    const stats = t.getMetrics().byModel['claude-haiku-4'];
+    expect(stats?.requestCount).toBe(2);
+    expect(stats?.totalInputTokens).toBe(3000);
+    expect(stats?.totalOutputTokens).toBe(1300);
+    expect(stats?.totalCostUsd).toBeCloseTo(0.03);
+  });
+
+  it('computes costPerOutputToken correctly', () => {
+    const t = new ModelUsageTracker();
+    t.recordUsage('model-a', 0, 1000, 0.01); // $0.00001 per output token
+    const stats = t.getMetrics().byModel['model-a'];
+    expect(stats?.costPerOutputToken).toBeCloseTo(0.00001);
+  });
+
+  it('costPerOutputToken is null when output tokens are zero', () => {
+    const t = new ModelUsageTracker();
+    t.recordUsage('model-a', 100, 0, 0.001);
+    expect(t.getMetrics().byModel['model-a']?.costPerOutputToken).toBeNull();
+  });
+
+  it('avgOutputTokensPerRequest is correct', () => {
+    const t = new ModelUsageTracker();
+    t.recordUsage('model-a', 0, 200, 0);
+    t.recordUsage('model-a', 0, 400, 0);
+    expect(t.getMetrics().byModel['model-a']?.avgOutputTokensPerRequest).toBe(300);
+  });
+
+  it('mostUsedModel is the model with the highest requestCount', () => {
+    const t = new ModelUsageTracker();
+    t.recordUsage('claude-haiku-4', 100, 50, 0.001);
+    t.recordUsage('claude-sonnet-4', 100, 50, 0.005);
+    t.recordUsage('claude-sonnet-4', 100, 50, 0.005);
+    expect(t.getMetrics().mostUsedModel).toBe('claude-sonnet-4');
+  });
+
+  it('mostEfficientModel has the lowest costPerOutputToken', () => {
+    const t = new ModelUsageTracker();
+    t.recordUsage('expensive-model', 0, 100, 1.0);  // $0.01 per output token
+    t.recordUsage('cheap-model', 0, 100, 0.1);       // $0.001 per output token
+    expect(t.getMetrics().mostEfficientModel).toBe('cheap-model');
+  });
+
+  it('totalModelsUsed counts distinct models', () => {
+    const t = new ModelUsageTracker();
+    t.recordUsage('model-a', 100, 50, 0.01);
+    t.recordUsage('model-b', 100, 50, 0.01);
+    t.recordUsage('model-a', 100, 50, 0.01); // second call to model-a — not counted twice
+    expect(t.getMetrics().totalModelsUsed).toBe(2);
+  });
+
+  it('reset clears all state', () => {
+    const t = new ModelUsageTracker();
+    t.recordUsage('claude-haiku-4', 1000, 500, 0.01);
+    t.reset('new-session');
+    const m = t.getMetrics();
+    expect(m.totalModelsUsed).toBe(0);
+    expect(m.mostUsedModel).toBeNull();
+    expect(m.byModel).toEqual({});
+  });
+});
+```
 
 ---
 
-## Step — Register all four trackers
+## ✅ Step — Register all four trackers
 
-### Update `RegisterToolsOptions` in `session-stats.ts`
+This step involves four files: a new `analytics-tools.ts`, plus modifications to `session-stats.ts`, `cost-tools.ts`, and `index.ts`.
 
-Add to the options interface:
+### ✅ 5a — Create `packages/nr-ai-mcp-server/src/tools/analytics-tools.ts`
+
+Create this file with the following complete content:
+
+```typescript
+import type { ContextWindowTracker } from '../metrics/context-window-tracker.js';
+import type { LatencyTracker } from '../metrics/latency-tracker.js';
+import type { TaskCompletionTracker } from '../metrics/task-completion-tracker.js';
+import type { ModelUsageTracker } from '../metrics/model-usage-tracker.js';
+import type { TaskDetector } from '../metrics/task-detector.js';
+
+export const CONTEXT_EFFICIENCY_TOOL = {
+  name: 'nr_observe_get_context_efficiency',
+  description:
+    'Get context window efficiency metrics: unique vs. repeated file reads, repeated-read ratio, and top re-read files. A high ratio suggests the model is losing context.',
+  inputSchema: { type: 'object' as const, properties: {} },
+  annotations: { readOnlyHint: true },
+};
+
+export const LATENCY_PERCENTILES_TOOL = {
+  name: 'nr_observe_get_latency_percentiles',
+  description:
+    'Get p50/p95/p99 latency percentiles for tool calls, broken down by tool type. Use to identify which tools are slowest in the current session.',
+  inputSchema: { type: 'object' as const, properties: {} },
+  annotations: { readOnlyHint: true },
+};
+
+export const TASK_COMPLETION_TOOL = {
+  name: 'nr_observe_get_task_completion_rate',
+  description:
+    'Get task lifecycle metrics: completion rate, average task duration, and average tool calls per task. Distinguishes completed tasks from in-progress/abandoned.',
+  inputSchema: { type: 'object' as const, properties: {} },
+  annotations: { readOnlyHint: true },
+};
+
+export const MODEL_USAGE_TOOL = {
+  name: 'nr_observe_get_model_usage',
+  description:
+    'Get per-model usage statistics: request counts, token totals, cost, and cost-per-output-token efficiency ratios. Identifies the most-used and most cost-efficient model.',
+  inputSchema: { type: 'object' as const, properties: {} },
+  annotations: { readOnlyHint: true },
+};
+
+export function handleGetContextEfficiency(
+  tracker: ContextWindowTracker,
+): { content: Array<{ type: 'text'; text: string }> } {
+  return { content: [{ type: 'text' as const, text: JSON.stringify(tracker.getMetrics(), null, 2) }] };
+}
+
+export function handleGetLatencyPercentiles(
+  tracker: LatencyTracker,
+): { content: Array<{ type: 'text'; text: string }> } {
+  return { content: [{ type: 'text' as const, text: JSON.stringify(tracker.getMetrics(), null, 2) }] };
+}
+
+export function handleGetTaskCompletionRate(
+  tracker: TaskCompletionTracker,
+  taskDetector?: TaskDetector,
+): { content: Array<{ type: 'text'; text: string }> } {
+  const metrics = tracker.getMetrics();
+  const inProgressTasks = taskDetector?.getMetrics().currentTaskActive ? 1 : 0;
+  const totalTasksDetected = metrics.completedTasks + inProgressTasks;
+  const completionRate = totalTasksDetected > 0 ? metrics.completedTasks / totalTasksDetected : null;
+  return {
+    content: [{
+      type: 'text' as const,
+      text: JSON.stringify(
+        { ...metrics, inProgressTasks, totalTasksDetected, completionRate },
+        null,
+        2,
+      ),
+    }],
+  };
+}
+
+export function handleGetModelUsage(
+  tracker: ModelUsageTracker,
+): { content: Array<{ type: 'text'; text: string }> } {
+  return { content: [{ type: 'text' as const, text: JSON.stringify(tracker.getMetrics(), null, 2) }] };
+}
+```
+
+### ✅ 5b — Modify `packages/nr-ai-mcp-server/src/tools/session-stats.ts`
+
+**Add imports** at the top of the file, after the existing `cross-session-tools.js` import block:
+
+```typescript
+import type { ContextWindowTracker } from '../metrics/context-window-tracker.js';
+import type { LatencyTracker } from '../metrics/latency-tracker.js';
+import type { TaskCompletionTracker } from '../metrics/task-completion-tracker.js';
+import type { ModelUsageTracker } from '../metrics/model-usage-tracker.js';
+import {
+  CONTEXT_EFFICIENCY_TOOL,
+  LATENCY_PERCENTILES_TOOL,
+  TASK_COMPLETION_TOOL,
+  MODEL_USAGE_TOOL,
+  handleGetContextEfficiency,
+  handleGetLatencyPercentiles,
+  handleGetTaskCompletionRate,
+  handleGetModelUsage,
+} from './analytics-tools.js';
+```
+
+**Add to `ToolRegistrationOptions` interface** (the existing interface at the bottom of the options section):
 
 ```typescript
 contextWindowTracker?: ContextWindowTracker;
@@ -556,24 +974,103 @@ taskCompletionTracker?: TaskCompletionTracker;
 modelUsageTracker?: ModelUsageTracker;
 ```
 
-### Add tool definitions and handlers
-
-In the relevant `*-tools.ts` file (or create `packages/nr-ai-mcp-server/src/tools/analytics-tools.ts`), add the four tool definitions and four handler functions following the exact pattern of existing cost/workflow tools.
-
-### Register in `registerTools()`
-
-Add conditional registration (only register if the tracker is provided) for each of the four tools, following the existing pattern:
+**Add to the destructuring** at the top of `registerTools()`, alongside the existing destructuring of `options`:
 
 ```typescript
-if (options.contextWindowTracker) {
-  toolList.push(CONTEXT_EFFICIENCY_TOOL);
-}
-// ... etc
+const {
+  // ... existing fields ...
+  contextWindowTracker,
+  latencyTracker,
+  taskCompletionTracker,
+  modelUsageTracker,
+} = options;
 ```
 
-And in the `CallToolRequestSchema` handler add matching cases.
+**Add tool registration conditions** in the `registerTools()` body, after the existing `if (recommendationEngine)` block:
 
-### Instantiate and wire in `index.ts`
+```typescript
+if (contextWindowTracker) {
+  tools.push(CONTEXT_EFFICIENCY_TOOL);
+}
+if (latencyTracker) {
+  tools.push(LATENCY_PERCENTILES_TOOL);
+}
+if (taskCompletionTracker) {
+  tools.push(TASK_COMPLETION_TOOL);
+}
+if (modelUsageTracker) {
+  tools.push(MODEL_USAGE_TOOL);
+}
+```
+
+**Add switch cases** in the `CallToolRequestSchema` handler, after the existing `nr_observe_get_platform_comparison` case:
+
+```typescript
+case 'nr_observe_get_context_efficiency':
+  if (!contextWindowTracker) break;
+  return handleGetContextEfficiency(contextWindowTracker);
+
+case 'nr_observe_get_latency_percentiles':
+  if (!latencyTracker) break;
+  return handleGetLatencyPercentiles(latencyTracker);
+
+case 'nr_observe_get_task_completion_rate':
+  if (!taskCompletionTracker) break;
+  return handleGetTaskCompletionRate(taskCompletionTracker, taskDetector);
+
+case 'nr_observe_get_model_usage':
+  if (!modelUsageTracker) break;
+  return handleGetModelUsage(modelUsageTracker);
+```
+
+### ✅ 5c — Modify `packages/nr-ai-mcp-server/src/tools/cost-tools.ts`
+
+`ModelUsageTracker.recordUsage()` must be called from `handleReportTokens()` because that's where the model name, token counts, and cost are computed.
+
+**Add import** at the top of `cost-tools.ts`:
+
+```typescript
+import type { ModelUsageTracker } from '../metrics/model-usage-tracker.js';
+```
+
+**Add an optional third parameter** to `handleReportTokens`:
+
+```typescript
+export function handleReportTokens(
+  costTracker: CostTracker,
+  args: TokenReport,
+  modelUsageTracker?: ModelUsageTracker,
+) {
+```
+
+**Add a call** after `const breakdown = costTracker.recordTokenUsage(usage, safeModel);`:
+
+```typescript
+modelUsageTracker?.recordUsage(safeModel, inputTokens, outputTokens, breakdown.totalUsd);
+```
+
+The existing `return { content: [...] }` block is unchanged.
+
+**Update the call site** in `session-stats.ts` `CallToolRequestSchema` handler:
+
+```typescript
+case 'nr_observe_report_tokens':
+  if (!costTracker) break;
+  return handleReportTokens(costTracker, args as unknown as TokenReport, modelUsageTracker);
+```
+
+### ✅ 5d — Modify `packages/nr-ai-mcp-server/src/index.ts`
+
+**Add imports** after the existing metrics imports:
+
+```typescript
+import { ContextWindowTracker } from './metrics/context-window-tracker.js';
+import { LatencyTracker } from './metrics/latency-tracker.js';
+import { TaskCompletionTracker } from './metrics/task-completion-tracker.js';
+import { ModelUsageTracker } from './metrics/model-usage-tracker.js';
+```
+
+**Instantiate** the four trackers near the other tracker instantiations (after `const feedbackCollector = new FeedbackCollector();`):
 
 ```typescript
 const contextWindowTracker = new ContextWindowTracker();
@@ -582,27 +1079,44 @@ const taskCompletionTracker = new TaskCompletionTracker();
 const modelUsageTracker = new ModelUsageTracker();
 ```
 
-In the `onRecord` callback, call `contextWindowTracker.recordToolCall(record)` and `latencyTracker.recordToolCall(record)`.
+**Wire into `onRecord`** — add these two lines inside the `onRecord` callback, after the `sessionTracker.recordToolCall(record)` call:
 
-For `taskCompletionTracker`, call `taskCompletionTracker.recordTask(task)` in the `for (const task of taskDetector.drainNewlyCompletedTasks())` loop.
+```typescript
+contextWindowTracker.recordToolCall(record);
+latencyTracker.recordToolCall(record);
+```
 
-For `modelUsageTracker`, call `modelUsageTracker.recordUsage(model, inputTokens, outputTokens, costUsd)` from the `nr_observe_report_tokens` handler (pass it down through `registerTools` options).
+**Wire `taskCompletionTracker`** — add one line inside the `for (const task of taskDetector.drainNewlyCompletedTasks())` loop, after `capturedNrIngest.ingestCodingTask(task)`:
 
-Pass all four to `registerTools()`.
+```typescript
+taskCompletionTracker.recordTask(task);
+```
+
+**Pass all four to `registerTools()`** — add them to the existing `registerTools(mcpServer.server, { ... })` call:
+
+```typescript
+registerTools(mcpServer.server, {
+  // ... all existing options ...
+  contextWindowTracker,
+  latencyTracker,
+  taskCompletionTracker,
+  modelUsageTracker,
+});
+```
 
 ---
 
-## Acceptance criteria
+## ✅ Acceptance criteria
 
-- [ ] `npm run build` passes with no TypeScript errors
-- [ ] `npm test` passes — all four new test files pass
-- [ ] All four trackers implement the `recordToolCall | recordTask | recordUsage → getMetrics → reset` pattern
-- [ ] `nr_observe_get_context_efficiency` returns `ContextWindowMetrics` JSON
-- [ ] `nr_observe_get_latency_percentiles` returns `LatencyMetrics` JSON
-- [ ] `nr_observe_get_task_completion_rate` returns `TaskCompletionMetrics` JSON
-- [ ] `nr_observe_get_model_usage` returns `ModelUsageMetrics` JSON
-- [ ] `reset()` on each tracker produces the same state as a freshly constructed instance
-- [ ] `npm run lint` passes
+- [x] `npm run build` passes with no TypeScript errors
+- [x] `npm test` passes — all four new test files pass
+- [x] All four trackers implement the `recordToolCall | recordTask | recordUsage → getMetrics → reset` pattern
+- [x] `nr_observe_get_context_efficiency` returns `ContextWindowMetrics` JSON
+- [x] `nr_observe_get_latency_percentiles` returns `LatencyMetrics` JSON
+- [x] `nr_observe_get_task_completion_rate` returns JSON with `completedTasks`, `inProgressTasks`, `totalTasksDetected`, `completionRate`, `avgTaskDurationMs`, `avgToolCallsPerTask`
+- [x] `nr_observe_get_model_usage` returns `ModelUsageMetrics` JSON
+- [x] `reset()` on each tracker produces the same state as a freshly constructed instance
+- [x] `npm run lint` passes
 
 ---
 
@@ -619,13 +1133,13 @@ packages/nr-ai-mcp-server/src/metrics/task-completion-tracker.ts
 packages/nr-ai-mcp-server/src/metrics/task-completion-tracker.test.ts
 packages/nr-ai-mcp-server/src/metrics/model-usage-tracker.ts
 packages/nr-ai-mcp-server/src/metrics/model-usage-tracker.test.ts
-packages/nr-ai-mcp-server/src/tools/analytics-tools.ts  (or extend existing)
+packages/nr-ai-mcp-server/src/tools/analytics-tools.ts
 ```
 
 Files to **modify**:
 
 ```
-packages/nr-ai-mcp-server/src/tools/session-stats.ts — add 4 tracker options + registrations
-packages/nr-ai-mcp-server/src/tools/cost-tools.ts    — call modelUsageTracker.recordUsage()
-packages/nr-ai-mcp-server/src/index.ts               — instantiate + wire all 4 trackers
+packages/nr-ai-mcp-server/src/tools/session-stats.ts  — add 4 imports, 4 tracker options, 4 push conditions, 4 switch cases
+packages/nr-ai-mcp-server/src/tools/cost-tools.ts     — add modelUsageTracker import + optional param to handleReportTokens
+packages/nr-ai-mcp-server/src/index.ts                — add 4 imports, instantiate + wire all 4 trackers, pass to registerTools
 ```

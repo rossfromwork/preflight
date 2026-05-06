@@ -12,6 +12,7 @@ import type { AntiPattern } from '../metrics/anti-patterns.js';
 import type { SessionTracker } from '../metrics/session-tracker.js';
 import type { CostTracker } from '../metrics/cost-tracker.js';
 import type { EfficiencyScorer } from '../metrics/efficiency-score.js';
+import type { BudgetThresholdEvent } from '../metrics/budget-tracker.js';
 import { ProxyMetricsTracker } from '../metrics/proxy-metrics.js';
 import {
   AuditTrailManager,
@@ -69,6 +70,9 @@ export interface NrIngestOptions {
   costTracker?: CostTracker;
   /** Efficiency scorer for emitting ai.efficiency.* metrics. */
   efficiencyScorer?: EfficiencyScorer;
+  teamId?: string | null;
+  projectId?: string | null;
+  orgId?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -100,7 +104,7 @@ const STANDARD_KEYS = new Set([
  */
 export function toolCallToNrEvent(
   record: ToolCallRecord,
-  attrs: { developer: string; appName: string; sessionTraceId?: string },
+  attrs: { developer: string; appName: string; sessionTraceId?: string; teamId?: string | null; projectId?: string | null; orgId?: string | null },
 ): NrEventData {
   const event: NrEventData = {
     eventType: 'AiToolCall',
@@ -111,6 +115,10 @@ export function toolCallToNrEvent(
     developer: attrs.developer,
     app_name: attrs.appName,
   };
+
+  if (attrs.teamId) event.team_id = attrs.teamId;
+  if (attrs.projectId) event.project_id = attrs.projectId;
+  if (attrs.orgId) event.org_id = attrs.orgId;
 
   const sessionId = attrs.sessionTraceId ?? record.sessionId;
   if (sessionId != null) event.session_id = sessionId;
@@ -145,7 +153,7 @@ function isProxyToolCall(record: ToolCallRecord): record is ProxyToolCallRecord 
  */
 export function proxyToolCallToNrEvent(
   record: ProxyToolCallRecord,
-  attrs: { developer: string; appName: string; sessionTraceId?: string },
+  attrs: { developer: string; appName: string; sessionTraceId?: string; teamId?: string | null; projectId?: string | null; orgId?: string | null },
 ): NrEventData {
   const event: NrEventData = {
     eventType: 'AiMcpToolCall',
@@ -158,6 +166,10 @@ export function proxyToolCallToNrEvent(
     developer: attrs.developer,
     app_name: attrs.appName,
   };
+
+  if (attrs.teamId) event.team_id = attrs.teamId;
+  if (attrs.projectId) event.project_id = attrs.projectId;
+  if (attrs.orgId) event.org_id = attrs.orgId;
 
   const sessionId = attrs.sessionTraceId ?? record.sessionId;
   if (sessionId != null) event.session_id = sessionId;
@@ -174,7 +186,7 @@ export function proxyToolCallToNrEvent(
  */
 export function proxyRequestToNrEvent(
   record: ProxyRequestRecord,
-  attrs: { developer: string; appName: string },
+  attrs: { developer: string; appName: string; teamId?: string | null; projectId?: string | null; orgId?: string | null },
 ): NrEventData {
   const event: NrEventData = {
     eventType: 'AiProxyRequest',
@@ -187,6 +199,10 @@ export function proxyRequestToNrEvent(
     developer: attrs.developer,
     app_name: attrs.appName,
   };
+
+  if (attrs.teamId) event.team_id = attrs.teamId;
+  if (attrs.projectId) event.project_id = attrs.projectId;
+  if (attrs.orgId) event.org_id = attrs.orgId;
 
   if (record.proxyOverheadMs != null) event.proxy_overhead_ms = record.proxyOverheadMs;
   if (record.responseSizeBytes != null) event.response_size_bytes = record.responseSizeBytes;
@@ -202,7 +218,7 @@ export function proxyRequestToNrEvent(
  */
 export function codingTaskToNrEvent(
   task: AiCodingTask,
-  attrs: { developer: string; appName: string; sessionTraceId?: string },
+  attrs: { developer: string; appName: string; sessionTraceId?: string; teamId?: string | null; projectId?: string | null; orgId?: string | null },
 ): NrEventData {
   const firstRecord = task.toolCalls[0];
   const platform =
@@ -234,6 +250,10 @@ export function codingTaskToNrEvent(
     sub_agents_spawned: task.subAgentsSpawned,
   };
 
+  if (attrs.teamId) event.team_id = attrs.teamId;
+  if (attrs.projectId) event.project_id = attrs.projectId;
+  if (attrs.orgId) event.org_id = attrs.orgId;
+
   const sessionId = attrs.sessionTraceId ?? firstRecord?.sessionId ?? null;
   if (sessionId != null) event.session_id = sessionId;
 
@@ -247,7 +267,7 @@ export function codingTaskToNrEvent(
  */
 export function antiPatternToNrEvent(
   pattern: AntiPattern,
-  attrs: { developer: string; appName: string; sessionId?: string; platform?: string; taskId: string },
+  attrs: { developer: string; appName: string; sessionId?: string; platform?: string; taskId: string; teamId?: string | null; projectId?: string | null; orgId?: string | null },
 ): NrEventData {
   const event: NrEventData = {
     eventType: 'AiAntiPattern',
@@ -259,6 +279,10 @@ export function antiPatternToNrEvent(
     platform: attrs.platform ?? 'claude-code',
     suggestion: pattern.suggestion,
   };
+
+  if (attrs.teamId) event.team_id = attrs.teamId;
+  if (attrs.projectId) event.project_id = attrs.projectId;
+  if (attrs.orgId) event.org_id = attrs.orgId;
 
   if (attrs.sessionId != null) event.session_id = attrs.sessionId;
   if (pattern.file != null) event.file = pattern.file;
@@ -287,6 +311,9 @@ export class NrIngestManager {
   private readonly developer: string;
   private readonly appName: string;
   private readonly sessionTraceId: string | undefined;
+  private readonly teamId: string | null | undefined;
+  private readonly projectId: string | null | undefined;
+  private readonly orgId: string | null | undefined;
   private readonly metricHarvestIntervalMs: number;
   private sessionGaugeIntervalId: ReturnType<typeof setInterval> | null = null;
   private running = false;
@@ -295,6 +322,9 @@ export class NrIngestManager {
     this.developer = options.developer;
     this.appName = options.appName;
     this.sessionTraceId = options.sessionTraceId;
+    this.teamId = options.teamId;
+    this.projectId = options.projectId;
+    this.orgId = options.orgId;
     this.sessionTracker = options.sessionTracker;
     this.proxyMetrics = new ProxyMetricsTracker();
     this.costTracker = options.costTracker;
@@ -329,6 +359,9 @@ export class NrIngestManager {
     const event = proxyRequestToNrEvent(record, {
       developer: this.developer,
       appName: this.appName,
+      teamId: this.teamId,
+      projectId: this.projectId,
+      orgId: this.orgId,
     });
     this.scheduler.addEvent(event);
 
@@ -348,17 +381,25 @@ export class NrIngestManager {
       developer: this.developer,
       appName: this.appName,
       sessionTraceId: this.sessionTraceId,
+      teamId: this.teamId,
+      projectId: this.projectId,
+      orgId: this.orgId,
     });
     this.scheduler.addEvent(event);
 
     // Record per-call metrics for NR Metric API
     const tool = record.toolName;
     const sessionId = this.sessionTraceId;
-    this.scheduler.recordMetric('ai.tool.call_count', 1, sessionId != null ? { tool, session_id: sessionId } : { tool });
+    const teamDims: Record<string, string> = {};
+    if (this.teamId) teamDims.team_id = this.teamId;
+    if (this.projectId) teamDims.project_id = this.projectId;
+    if (this.orgId) teamDims.org_id = this.orgId;
+
+    this.scheduler.recordMetric('ai.tool.call_count', 1, sessionId != null ? { tool, session_id: sessionId, ...teamDims } : { tool, ...teamDims });
     if (record.durationMs != null) {
-      this.scheduler.recordMetric('ai.tool.duration_ms', record.durationMs, sessionId != null ? { tool, session_id: sessionId } : { tool });
+      this.scheduler.recordMetric('ai.tool.duration_ms', record.durationMs, sessionId != null ? { tool, session_id: sessionId, ...teamDims } : { tool, ...teamDims });
     }
-    this.scheduler.recordMetric('ai.tool.success', record.success ? 1 : 0, sessionId != null ? { tool, session_id: sessionId } : { tool });
+    this.scheduler.recordMetric('ai.tool.success', record.success ? 1 : 0, sessionId != null ? { tool, session_id: sessionId, ...teamDims } : { tool, ...teamDims });
 
     // If this is a proxied tool call, also emit AiMcpToolCall event and aggregate
     if (isProxyToolCall(record)) {
@@ -366,6 +407,9 @@ export class NrIngestManager {
         developer: this.developer,
         appName: this.appName,
         sessionTraceId: this.sessionTraceId,
+        teamId: this.teamId,
+        projectId: this.projectId,
+        orgId: this.orgId,
       });
       this.scheduler.addEvent(proxyEvent);
       this.proxyMetrics.recordProxyCall(record);
@@ -375,9 +419,17 @@ export class NrIngestManager {
     const auditRecord = isProxyToolCall(record)
       ? this.auditTrail.recordProxyCall(record)
       : this.auditTrail.recordToolCall(record);
-    this.scheduler.addEvent(auditRecordToNrEvent(auditRecord));
+    this.scheduler.addEvent(auditRecordToNrEvent(auditRecord, {
+      teamId: this.teamId,
+      projectId: this.projectId,
+      orgId: this.orgId,
+    }));
     if (auditRecord.securityAlert) {
-      this.scheduler.addEvent(securityAlertToNrEvent(auditRecord));
+      this.scheduler.addEvent(securityAlertToNrEvent(auditRecord, {
+        teamId: this.teamId,
+        projectId: this.projectId,
+        orgId: this.orgId,
+      }));
     }
     // Queue audit log entry for NR Logs API
     this.logIngest.addAuditRecord(auditRecord);
@@ -388,6 +440,9 @@ export class NrIngestManager {
       developer: this.developer,
       appName: this.appName,
       sessionTraceId: this.sessionTraceId,
+      teamId: this.teamId,
+      projectId: this.projectId,
+      orgId: this.orgId,
     });
     this.scheduler.addEvent(event);
   }
@@ -402,8 +457,30 @@ export class NrIngestManager {
       sessionId: this.sessionTraceId ?? context.sessionId,
       platform: context.platform,
       taskId: context.taskId,
+      teamId: this.teamId,
+      projectId: this.projectId,
+      orgId: this.orgId,
     });
     this.scheduler.addEvent(event);
+  }
+
+  ingestBudgetWarning(event: BudgetThresholdEvent): void {
+    const nrEvent: NrEventData = {
+      eventType: 'AiBudgetWarning',
+      timestamp: Math.floor(event.timestamp / 1000),
+      developer: this.developer,
+      appName: this.appName,
+      budget_period: event.period,
+      threshold_pct: event.thresholdPct,
+      spent_usd: event.spentUsd,
+      budget_usd: event.budgetUsd,
+      remaining_usd: Math.max(0, event.budgetUsd - event.spentUsd),
+    };
+    if (this.teamId) nrEvent.team_id = this.teamId;
+    if (this.projectId) nrEvent.project_id = this.projectId;
+    if (this.orgId) nrEvent.org_id = this.orgId;
+    if (this.sessionTraceId != null) nrEvent.session_id = this.sessionTraceId;
+    this.scheduler.addEvent(nrEvent);
   }
 
   start(): void {
@@ -437,6 +514,11 @@ export class NrIngestManager {
     if (!this.running) return;
     const sessionId = this.sessionTraceId;
 
+    const teamAttrs: Record<string, string> = {};
+    if (this.teamId) teamAttrs.team_id = this.teamId;
+    if (this.projectId) teamAttrs.project_id = this.projectId;
+    if (this.orgId) teamAttrs.org_id = this.orgId;
+
     const record = (name: string, value: number, attrs: Record<string, string | number> = {}) => {
       this.scheduler.recordMetric(
         name,
@@ -446,9 +528,9 @@ export class NrIngestManager {
     };
 
     const metrics = this.sessionTracker.getMetrics();
-    record('ai.session.duration_ms', metrics.sessionDurationMs);
-    record('ai.session.unique_files_read', metrics.uniqueFilesRead);
-    record('ai.session.unique_files_written', metrics.uniqueFilesWritten);
+    record('ai.session.duration_ms', metrics.sessionDurationMs, { ...teamAttrs });
+    record('ai.session.unique_files_read', metrics.uniqueFilesRead, { ...teamAttrs });
+    record('ai.session.unique_files_written', metrics.uniqueFilesWritten, { ...teamAttrs });
 
     // Emit cost and efficiency metrics with developer dimension so Team View
     // FACET developer queries return per-developer breakdowns.
@@ -461,8 +543,8 @@ export class NrIngestManager {
             name,
             value,
             sessionId != null
-              ? { developer, session_id: sessionId, ...attrs }
-              : { developer, ...attrs },
+              ? { developer, session_id: sessionId, ...teamAttrs, ...attrs }
+              : { developer, ...teamAttrs, ...attrs },
           );
         },
       } as unknown as MetricAggregator;
@@ -473,22 +555,23 @@ export class NrIngestManager {
     // Emit aggregated proxy metrics
     const proxyMetrics = this.proxyMetrics.getMetrics();
     for (const [server, stats] of Object.entries(proxyMetrics.perServer)) {
-      this.scheduler.recordMetric('ai.mcp.server_call_count', stats.callCount, { server });
+      this.scheduler.recordMetric('ai.mcp.server_call_count', stats.callCount, { server, ...teamAttrs });
       if (stats.latencyMs.count > 0) {
         const avg = stats.latencyMs.sum / stats.latencyMs.count;
-        this.scheduler.recordMetric('ai.mcp.server_latency_ms', avg, { server });
+        this.scheduler.recordMetric('ai.mcp.server_latency_ms', avg, { server, ...teamAttrs });
       }
       if (stats.errorRate > 0) {
-        this.scheduler.recordMetric('ai.mcp.server_error_rate', stats.errorRate, { server });
+        this.scheduler.recordMetric('ai.mcp.server_error_rate', stats.errorRate, { server, ...teamAttrs });
       }
     }
     if (proxyMetrics.avgProxyOverheadMs > 0) {
-      this.scheduler.recordMetric('ai.mcp.proxy_overhead_ms', proxyMetrics.avgProxyOverheadMs);
+      this.scheduler.recordMetric('ai.mcp.proxy_overhead_ms', proxyMetrics.avgProxyOverheadMs, { ...teamAttrs });
     }
     for (const entry of proxyMetrics.toolPopularity) {
       this.scheduler.recordMetric('ai.mcp.tool_popularity', entry.count, {
         tool: entry.tool,
         server: entry.server,
+        ...teamAttrs,
       });
     }
   }

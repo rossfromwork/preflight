@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { randomUUID } from 'node:crypto';
+import { resolve } from 'node:path';
 import { Command } from 'commander';
 import { VERSION, createLogger } from '@nr-ai-observatory/shared';
 import { createServer } from './server.js';
@@ -11,6 +12,7 @@ import { WeeklySummaryGenerator } from './storage/weekly-summary.js';
 import { HookEventProcessor } from './hooks/index.js';
 import { SessionTracker } from './metrics/session-tracker.js';
 import { CostTracker } from './metrics/cost-tracker.js';
+import { BudgetTracker } from './metrics/budget-tracker.js';
 import { TaskDetector } from './metrics/task-detector.js';
 import { AntiPatternDetector } from './metrics/anti-patterns.js';
 import { EfficiencyScorer } from './metrics/efficiency-score.js';
@@ -20,6 +22,10 @@ import { ClaudeMdTracker } from './metrics/claudemd-tracker.js';
 import { CostPerOutcomeAnalyzer } from './metrics/cost-per-outcome.js';
 import { PromptFeedbackEngine } from './metrics/prompt-feedback.js';
 import { RecommendationEngine } from './metrics/recommendation-engine.js';
+import { ContextWindowTracker } from './metrics/context-window-tracker.js';
+import { LatencyTracker } from './metrics/latency-tracker.js';
+import { TaskCompletionTracker } from './metrics/task-completion-tracker.js';
+import { ModelUsageTracker } from './metrics/model-usage-tracker.js';
 import { NrIngestManager } from './transport/nr-ingest.js';
 import { FeedbackCollector } from './tools/workflow-tools.js';
 import { registerTools } from './tools/session-stats.js';
@@ -39,6 +45,9 @@ export {
   CursorAdapter,
   WindsurfAdapter,
   CopilotAdapter,
+  ZedAdapter,
+  ContinueAdapter,
+  AmazonQAdapter,
   parseCopilotUsageResponse,
   GenericMcpAdapter,
   validateReportToolCallInput,
@@ -148,12 +157,25 @@ async function main(): Promise<void> {
     const localStore = new LocalStore(config.storagePath, config.hookBufferPath);
     localStore.initialize();
 
+    if (config.retainSessionsDays !== null && config.retainSessionsDays > 0) {
+      const { purgeOldSessions } = await import('./storage/retention.js');
+      const purged = purgeOldSessions(config.storagePath, config.retainSessionsDays);
+      if (purged > 0) {
+        logger.info('Retention purge complete', { deletedSessionFiles: purged });
+      }
+    }
+
     const sessionTracker = new SessionTracker();
     const costTracker = new CostTracker(sessionTracker);
     const taskDetector = new TaskDetector({ costTracker });
     const antiPatternDetector = new AntiPatternDetector();
     const efficiencyScorer = new EfficiencyScorer();
     const feedbackCollector = new FeedbackCollector();
+
+    const contextWindowTracker = new ContextWindowTracker();
+    const latencyTracker = new LatencyTracker();
+    const taskCompletionTracker = new TaskCompletionTracker();
+    const modelUsageTracker = new ModelUsageTracker();
 
     const sessionStore = new SessionStore({ storagePath: config.storagePath });
     const weeklySummaryGenerator = new WeeklySummaryGenerator({
@@ -180,6 +202,14 @@ async function main(): Promise<void> {
       taskDetector,
     });
 
+    const sessionStartMs = Date.now();
+
+    const budgetTracker = new BudgetTracker({
+      sessionBudgetUsd: config.sessionBudgetUsd,
+      dailyBudgetUsd: config.dailyBudgetUsd,
+      weeklyBudgetUsd: config.weeklyBudgetUsd,
+    });
+
     nrIngest = new NrIngestManager({
       licenseKey: config.licenseKey,
       transportOptions: {
@@ -188,6 +218,9 @@ async function main(): Promise<void> {
       },
       developer: config.developer,
       appName: config.appName,
+      teamId: config.teamId,
+      projectId: config.projectId,
+      orgId: config.orgId,
       sessionTracker,
       localStore,
       eventHarvestIntervalMs: config.harvestIntervalMs.events,
@@ -198,11 +231,23 @@ async function main(): Promise<void> {
     });
 
     const capturedNrIngest = nrIngest;
+
+    budgetTracker.setOnThreshold((event) => {
+      capturedNrIngest.ingestBudgetWarning(event);
+      logger.warn('Budget threshold reached', {
+        period: event.period,
+        pct: event.thresholdPct,
+        spentUsd: event.spentUsd.toFixed(4),
+        budgetUsd: event.budgetUsd.toFixed(2),
+      });
+    });
     eventProcessor = new HookEventProcessor({
       store: localStore,
       onRecord: (record) => {
         sessionTracker.recordToolCall(record);
         taskDetector.recordToolCall(record);
+        contextWindowTracker.recordToolCall(record);
+        latencyTracker.recordToolCall(record);
         capturedNrIngest.ingestToolCall(record);
 
         // Fallback cost estimation from tool payload byte sizes.
@@ -217,10 +262,20 @@ async function main(): Promise<void> {
           );
         }
 
+        const costMetrics = costTracker.getMetrics();
+        if (costMetrics.sessionTotalCostUsd !== null) {
+          budgetTracker.updateCost(
+            costMetrics.sessionTotalCostUsd,
+            costMetrics.sessionTotalCostUsd,
+            costMetrics.sessionTotalCostUsd,
+          );
+        }
+
         // Emit any tasks that completed as a result of this record,
         // and detect anti-patterns across each completed task's tool calls
         for (const task of taskDetector.drainNewlyCompletedTasks()) {
           capturedNrIngest.ingestCodingTask(task);
+          taskCompletionTracker.recordTask(task);
           const firstRecord = task.toolCalls[0];
           const context = {
             sessionId: firstRecord?.sessionId ?? undefined,
@@ -243,6 +298,7 @@ async function main(): Promise<void> {
     registerTools(mcpServer.server, {
       sessionTracker,
       costTracker,
+      budgetTracker,
       taskDetector,
       antiPatternDetector,
       efficiencyScorer,
@@ -254,7 +310,16 @@ async function main(): Promise<void> {
       claudeMdTracker,
       costPerOutcomeAnalyzer,
       recommendationEngine,
+      contextWindowTracker,
+      latencyTracker,
+      taskCompletionTracker,
+      modelUsageTracker,
       sessionTraceId,
+      sessionStartMs,
+      accountId: config.accountId,
+      teamId: config.teamId,
+      nrApiKey: config.nrApiKey,
+      configFilePath: resolve(config.storagePath, 'config.json'),
     });
 
     eventProcessor.start();

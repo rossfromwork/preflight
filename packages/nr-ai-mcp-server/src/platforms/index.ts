@@ -10,6 +10,9 @@ export { WindsurfAdapter } from './windsurf-adapter.js';
 export { CopilotAdapter } from './copilot-adapter.js';
 export type { CopilotToolCallEvent, CopilotUsageRecord } from './copilot-adapter.js';
 export { parseCopilotUsageResponse } from './copilot-adapter.js';
+export { ZedAdapter } from './zed-adapter.js';
+export { ContinueAdapter } from './continue-adapter.js';
+export { AmazonQAdapter } from './amazon-q-adapter.js';
 export { GenericMcpAdapter, validateReportToolCallInput } from './generic-mcp-adapter.js';
 export type { ReportToolCallInput, ReportSessionStartInput, ReportSessionEndInput } from './generic-mcp-adapter.js';
 export {

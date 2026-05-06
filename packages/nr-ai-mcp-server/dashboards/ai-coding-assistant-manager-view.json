@@ -1,0 +1,89 @@
+{
+  "name": "AI Coding Assistant — Manager View",
+  "description": "Team-level AI coding cost and efficiency. No session content.",
+  "permissions": "PUBLIC_READ_ONLY",
+  "pages": [
+    {
+      "name": "Team Overview",
+      "widgets": [
+        {
+          "title": "Total AI Cost (7 days)",
+          "layout": { "column": 1, "row": 1, "width": 3, "height": 3 },
+          "visualization": { "id": "viz.billboard" },
+          "rawConfiguration": {
+            "nrqlQueries": [{
+              "accountIds": [],
+              "query": "SELECT sum(ai.cost.session_total_usd.sum) AS 'Total Cost (USD)' FROM Metric SINCE 7 days ago"
+            }]
+          }
+        },
+        {
+          "title": "Cost by Developer (7 days)",
+          "layout": { "column": 4, "row": 1, "width": 5, "height": 3 },
+          "visualization": { "id": "viz.bar" },
+          "rawConfiguration": {
+            "nrqlQueries": [{
+              "accountIds": [],
+              "query": "SELECT sum(ai.cost.session_total_usd.sum) FROM Metric SINCE 7 days ago FACET developer"
+            }]
+          }
+        },
+        {
+          "title": "Avg Efficiency Score by Developer",
+          "layout": { "column": 9, "row": 1, "width": 4, "height": 3 },
+          "visualization": { "id": "viz.bar" },
+          "rawConfiguration": {
+            "nrqlQueries": [{
+              "accountIds": [],
+              "query": "SELECT average(ai.efficiency.score.sum) FROM Metric SINCE 7 days ago FACET developer"
+            }]
+          }
+        },
+        {
+          "title": "Daily AI Cost Trend",
+          "layout": { "column": 1, "row": 4, "width": 6, "height": 3 },
+          "visualization": { "id": "viz.line" },
+          "rawConfiguration": {
+            "nrqlQueries": [{
+              "accountIds": [],
+              "query": "SELECT sum(ai.cost.session_total_usd.sum) FROM Metric SINCE 30 days ago FACET developer TIMESERIES 1 day"
+            }]
+          }
+        },
+        {
+          "title": "Efficiency Score Trend",
+          "layout": { "column": 7, "row": 4, "width": 6, "height": 3 },
+          "visualization": { "id": "viz.line" },
+          "rawConfiguration": {
+            "nrqlQueries": [{
+              "accountIds": [],
+              "query": "SELECT average(ai.efficiency.score.sum) FROM Metric SINCE 30 days ago FACET developer TIMESERIES 1 day"
+            }]
+          }
+        },
+        {
+          "title": "Anti-patterns by Developer",
+          "layout": { "column": 1, "row": 7, "width": 6, "height": 3 },
+          "visualization": { "id": "viz.bar" },
+          "rawConfiguration": {
+            "nrqlQueries": [{
+              "accountIds": [],
+              "query": "SELECT count(*) FROM AiAntiPattern SINCE 7 days ago FACET developer"
+            }]
+          }
+        },
+        {
+          "title": "Cost by Project",
+          "layout": { "column": 7, "row": 7, "width": 6, "height": 3 },
+          "visualization": { "id": "viz.bar" },
+          "rawConfiguration": {
+            "nrqlQueries": [{
+              "accountIds": [],
+              "query": "SELECT sum(numeric(cost.totalUsd)) FROM Metric WHERE metricName = 'ai.cost.session' SINCE 7 days ago FACET project_id"
+            }]
+          }
+        }
+      ]
+    }
+  ]
+}

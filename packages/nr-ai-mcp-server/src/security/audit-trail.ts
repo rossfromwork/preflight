@@ -182,7 +182,7 @@ function detectSecurityAlert(
 // NR Event helpers
 // ---------------------------------------------------------------------------
 
-export function auditRecordToNrEvent(record: AuditRecord): NrEventData {
+export function auditRecordToNrEvent(record: AuditRecord, attrs?: { teamId?: string | null; projectId?: string | null; orgId?: string | null }): NrEventData {
   const event: NrEventData = {
     eventType: 'AiAuditEvent',
     timestamp: Math.floor(record.timestamp / 1000),
@@ -191,6 +191,10 @@ export function auditRecordToNrEvent(record: AuditRecord): NrEventData {
     detail: record.detail,
     developer: record.developer,
   };
+
+  if (attrs?.teamId) event.team_id = attrs.teamId;
+  if (attrs?.projectId) event.project_id = attrs.projectId;
+  if (attrs?.orgId) event.org_id = attrs.orgId;
 
   if (record.sessionId != null) event.session_id = record.sessionId;
   if (record.filePath != null) event.file_path = redactSensitive(record.filePath);
@@ -207,7 +211,7 @@ export function auditRecordToNrEvent(record: AuditRecord): NrEventData {
   return event;
 }
 
-export function securityAlertToNrEvent(record: AuditRecord): NrEventData {
+export function securityAlertToNrEvent(record: AuditRecord, attrs?: { teamId?: string | null; projectId?: string | null; orgId?: string | null }): NrEventData {
   const alert = record.securityAlert!;
   const event: NrEventData = {
     eventType: 'SecurityAlert',
@@ -218,6 +222,10 @@ export function securityAlertToNrEvent(record: AuditRecord): NrEventData {
     tool: record.tool,
     developer: record.developer,
   };
+
+  if (attrs?.teamId) event.team_id = attrs.teamId;
+  if (attrs?.projectId) event.project_id = attrs.projectId;
+  if (attrs?.orgId) event.org_id = attrs.orgId;
 
   if (record.sessionId != null) event.session_id = record.sessionId;
   if (record.filePath != null) event.file_path = redactSensitive(record.filePath);

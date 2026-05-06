@@ -28,7 +28,7 @@ Before starting, read these files end-to-end:
 
 Open `packages/nr-ai-mcp-server/src/config.ts`.
 
-### 1a — Add to the `McpServerConfig` interface
+### ✅ 1a — Add to the `McpServerConfig` interface
 
 Add these fields after the `harvestIntervalMs` field:
 
@@ -38,7 +38,7 @@ readonly dailyBudgetUsd: number | null;
 readonly weeklyBudgetUsd: number | null;
 ```
 
-### 1b — Add env/file loading in `loadMcpConfig()`
+### ✅ 1b — Add env/file loading in `loadMcpConfig()`
 
 In the `config` object construction block, after `harvestIntervalMs`, add:
 
@@ -61,13 +61,13 @@ weeklyBudgetUsd:
 
 > Budget fields are optional (`null` = no limit). Do not validate them as required — the server must still start if they're absent.
 
-### 1c — Update the debug log at the end of `loadMcpConfig()`
+### ✅ 1c — Update the debug log at the end of `loadMcpConfig()`
 
 Add `sessionBudgetUsd`, `dailyBudgetUsd`, `weeklyBudgetUsd` to the `logger.debug('Configuration loaded', ...)` call.
 
 ---
 
-## Step 2 — Create `BudgetTracker`
+## ✅ Step 2 — Create `BudgetTracker`
 
 Create `packages/nr-ai-mcp-server/src/metrics/budget-tracker.ts`.
 
@@ -224,7 +224,7 @@ export class BudgetTracker {
 
 ---
 
-## Step 3 — Add cost forecast logic
+## ✅ Step 3 — Add cost forecast logic
 
 Create `packages/nr-ai-mcp-server/src/metrics/cost-forecast.ts`.
 
@@ -300,11 +300,11 @@ export function buildCostForecast(
 
 ---
 
-## Step 4 — Add NrIngest budget warning events
+## ✅ Step 4 — Add NrIngest budget warning events
 
 Open `packages/nr-ai-mcp-server/src/transport/nr-ingest.ts`.
 
-### 4a — Add `budgetTracker` to `NrIngestOptions`
+### ✅ 4a — Add `budgetTracker` to `NrIngestOptions`
 
 ```typescript
 /** Budget tracker for emitting budget threshold warning events. */
@@ -313,7 +313,7 @@ budgetTracker?: BudgetTracker;
 
 Import `BudgetTracker` and `BudgetThresholdEvent` from `'../metrics/budget-tracker.js'`.
 
-### 4b — Add `ingestBudgetWarning()` method
+### ✅ 4b — Add `ingestBudgetWarning()` method
 
 ```typescript
 ingestBudgetWarning(event: BudgetThresholdEvent): void {
@@ -334,11 +334,11 @@ ingestBudgetWarning(event: BudgetThresholdEvent): void {
 
 ---
 
-## Step 5 — Add MCP tool handlers
+## ✅ Step 5 — Add MCP tool handlers
 
 Open `packages/nr-ai-mcp-server/src/tools/cost-tools.ts`.
 
-### 5a — Add `BUDGET_STATUS_TOOL` definition
+### ✅ 5a — Add `BUDGET_STATUS_TOOL` definition
 
 ```typescript
 export const BUDGET_STATUS_TOOL = {
@@ -353,7 +353,7 @@ export const BUDGET_STATUS_TOOL = {
 };
 ```
 
-### 5b — Add `COST_FORECAST_TOOL` definition
+### ✅ 5b — Add `COST_FORECAST_TOOL` definition
 
 ```typescript
 export const COST_FORECAST_TOOL = {
@@ -368,7 +368,7 @@ export const COST_FORECAST_TOOL = {
 };
 ```
 
-### 5c — Add handler functions
+### ✅ 5c — Add handler functions
 
 Import `BudgetTracker` and `buildCostForecast` at the top of the file.
 
@@ -393,11 +393,11 @@ export function handleGetCostForecast(
 
 ---
 
-## Step 6 — Register the new tools in `registerTools()`
+## ✅ Step 6 — Register the new tools in `registerTools()`
 
 Open `packages/nr-ai-mcp-server/src/tools/session-stats.ts`.
 
-### 6a — Update the `RegisterToolsOptions` interface
+### ✅ 6a — Update the `RegisterToolsOptions` interface
 
 Add:
 
@@ -406,7 +406,7 @@ budgetTracker?: BudgetTracker;
 sessionStartMs?: number;
 ```
 
-### 6b — Import new tool definitions and handlers from `cost-tools.ts`
+### ✅ 6b — Import new tool definitions and handlers from `cost-tools.ts`
 
 ```typescript
 import {
@@ -418,7 +418,7 @@ import {
 } from './cost-tools.js';
 ```
 
-### 6c — Register the tools in `registerTools()`
+### ✅ 6c — Register the tools in `registerTools()`
 
 Inside `registerTools()`, after the existing cost tools registration, add:
 
@@ -447,11 +447,11 @@ case 'nr_observe_get_cost_forecast':
 
 ---
 
-## Step 7 — Wire everything together in `index.ts`
+## ✅ Step 7 — Wire everything together in `index.ts`
 
 Open `packages/nr-ai-mcp-server/src/index.ts`.
 
-### 7a — Instantiate `BudgetTracker`
+### ✅ 7a — Instantiate `BudgetTracker`
 
 After `const efficiencyScorer = new EfficiencyScorer();`, add:
 
@@ -476,7 +476,7 @@ const budgetTracker = new BudgetTracker({
 
 > Note: `capturedNrIngest` is already used in the `onRecord` closure pattern. Follow the same capture pattern here.
 
-### 7b — Update cost accumulation in `onRecord`
+### ✅ 7b — Update cost accumulation in `onRecord`
 
 Inside the `onRecord` callback (where `costTracker.recordEstimatedTokens` is called), add after any cost tracker update:
 
@@ -491,7 +491,7 @@ if (costMetrics.sessionTotalCostUsd !== null) {
 }
 ```
 
-### 7c — Pass to `registerTools()`
+### ✅ 7c — Pass to `registerTools()`
 
 Add `budgetTracker` and `sessionStartMs` to the `registerTools()` call:
 
@@ -503,7 +503,7 @@ registerTools(mcpServer.server, {
 });
 ```
 
-### 7d — Pass to `NrIngestManager`
+### ✅ 7d — Pass to `NrIngestManager`
 
 Add `budgetTracker` to the `NrIngestManager` constructor options:
 
@@ -516,7 +516,7 @@ nrIngest = new NrIngestManager({
 
 ---
 
-## Step 8 — Write tests
+## ✅ Step 8 — Write tests
 
 ### `packages/nr-ai-mcp-server/src/metrics/budget-tracker.test.ts`
 
@@ -626,17 +626,17 @@ The existing config test file should already exist. Add cases:
 
 ---
 
-## Acceptance criteria
+## ✅ Acceptance criteria
 
-- [ ] `npm run build` passes with no TypeScript errors
-- [ ] `npm test` passes — all `budget-tracker.test.ts` and `cost-forecast.test.ts` assertions pass
-- [ ] `McpServerConfig` has `sessionBudgetUsd`, `dailyBudgetUsd`, `weeklyBudgetUsd` fields (all nullable)
-- [ ] Setting `NEW_RELIC_AI_SESSION_BUDGET_USD=5` in env and spending $5 in a session triggers a `100%` threshold callback
-- [ ] `nr_observe_get_budget_status` tool is registered and returns `BudgetStatus` JSON
-- [ ] `nr_observe_get_cost_forecast` tool is registered and returns `CostForecast` JSON
-- [ ] Budget threshold events are emitted to NR as `AiBudgetWarning` event type
-- [ ] Tools are absent (not registered) when `budgetTracker` is not configured
-- [ ] `npm run lint` passes
+- [x] `npm run build` passes with no TypeScript errors
+- [x] `npm test` passes — all `budget-tracker.test.ts` and `cost-forecast.test.ts` assertions pass
+- [x] `McpServerConfig` has `sessionBudgetUsd`, `dailyBudgetUsd`, `weeklyBudgetUsd` fields (all nullable)
+- [x] Setting `NEW_RELIC_AI_SESSION_BUDGET_USD=5` in env and spending $5 in a session triggers a `100%` threshold callback
+- [x] `nr_observe_get_budget_status` tool is registered and returns `BudgetStatus` JSON
+- [x] `nr_observe_get_cost_forecast` tool is registered and returns `CostForecast` JSON
+- [x] Budget threshold events are emitted to NR as `AiBudgetWarning` event type
+- [x] Tools are absent (not registered) when `budgetTracker` is not configured
+- [x] `npm run lint` passes
 
 ---
 

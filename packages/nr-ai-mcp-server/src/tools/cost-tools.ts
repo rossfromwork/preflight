@@ -8,6 +8,9 @@
 
 import type { CostTracker } from '../metrics/cost-tracker.js';
 import type { TaskDetector } from '../metrics/task-detector.js';
+import type { BudgetTracker } from '../metrics/budget-tracker.js';
+import type { ModelUsageTracker } from '../metrics/model-usage-tracker.js';
+import { buildCostForecast } from '../metrics/cost-forecast.js';
 import type { TokenUsage } from '@nr-ai-observatory/shared';
 
 // ---------------------------------------------------------------------------
@@ -57,7 +60,11 @@ const clampToken = (v: number): number => {
   return Math.min(Math.max(0, Math.floor(v)), MAX_TOKENS);
 };
 
-export function handleReportTokens(costTracker: CostTracker, args: TokenReport) {
+export function handleReportTokens(
+  costTracker: CostTracker,
+  args: TokenReport,
+  modelUsageTracker?: ModelUsageTracker,
+) {
   const inputTokens       = clampToken(args.input_tokens);
   const outputTokens      = clampToken(args.output_tokens);
   const thinkingTokens    = clampToken(args.thinking_tokens ?? 0);
@@ -76,6 +83,7 @@ export function handleReportTokens(costTracker: CostTracker, args: TokenReport) 
   };
 
   const breakdown = costTracker.recordTokenUsage(usage, safeModel);
+  modelUsageTracker?.recordUsage(safeModel, inputTokens, outputTokens, breakdown.totalUsd);
   const metrics = costTracker.getMetrics();
 
   return {
@@ -144,4 +152,55 @@ export function handleGetCostBreakdown(
   return {
     content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
   };
+}
+
+// ---------------------------------------------------------------------------
+// Budget Status tool
+// ---------------------------------------------------------------------------
+
+export const BUDGET_STATUS_TOOL = {
+  name: 'nr_observe_get_budget_status',
+  description:
+    'Get current AI spend vs. configured budget caps (session, daily, weekly). Returns remaining budget, % used, and any threshold alerts fired this session.',
+  inputSchema: {
+    type: 'object' as const,
+    properties: {},
+  },
+  annotations: { readOnlyHint: true },
+};
+
+// ---------------------------------------------------------------------------
+// Cost Forecast tool
+// ---------------------------------------------------------------------------
+
+export const COST_FORECAST_TOOL = {
+  name: 'nr_observe_get_cost_forecast',
+  description:
+    'Project AI spending forward based on current session rate. Returns forecast cost for end-of-day, end-of-week, and end-of-session (8h), with a confidence note.',
+  inputSchema: {
+    type: 'object' as const,
+    properties: {},
+  },
+  annotations: { readOnlyHint: true },
+};
+
+// ---------------------------------------------------------------------------
+// Handlers
+// ---------------------------------------------------------------------------
+
+export function handleGetBudgetStatus(
+  budgetTracker: BudgetTracker,
+): { content: Array<{ type: 'text'; text: string }> } {
+  const status = budgetTracker.getStatus();
+  return { content: [{ type: 'text', text: JSON.stringify(status, null, 2) }] };
+}
+
+export function handleGetCostForecast(
+  costTracker: CostTracker,
+  sessionStartMs: number,
+): { content: Array<{ type: 'text'; text: string }> } {
+  const metrics = costTracker.getMetrics();
+  const spentUsd = metrics.sessionTotalCostUsd ?? 0;
+  const forecast = buildCostForecast(spentUsd, sessionStartMs);
+  return { content: [{ type: 'text', text: JSON.stringify(forecast, null, 2) }] };
 }

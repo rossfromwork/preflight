@@ -5,16 +5,22 @@ import { CursorAdapter } from './cursor-adapter.js';
 import { WindsurfAdapter } from './windsurf-adapter.js';
 import { CopilotAdapter } from './copilot-adapter.js';
 import { GenericMcpAdapter } from './generic-mcp-adapter.js';
+import { ZedAdapter } from './zed-adapter.js';
+import { ContinueAdapter } from './continue-adapter.js';
+import { AmazonQAdapter } from './amazon-q-adapter.js';
 import type { PlatformAdapter, PlatformSessionMetadata, NormalizedToolCall } from './types.js';
 
 let stderrSpy: ReturnType<typeof jest.spyOn>;
 const savedEnv: Record<string, string | undefined> = {};
 
 const ENV_KEYS = [
-  'CLAUDE_CODE', 'CLAUDE_CODE_VERSION', 'MCP_CLIENT',
+  'CLAUDE_CODE', 'CLAUDE_CODE_VERSION', 'MCP_CLIENT', 'MCP_CLIENT_NAME',
   'CURSOR_SESSION_ID', 'CURSOR_TRACE_ID',
   'WINDSURF_SESSION_ID', 'WINDSURF_CONTEXT_ID',
   'NR_AI_COPILOT_OBSERVER',
+  'ZED_SESSION_ID', 'ZED_EXTENSION_API_VERSION', 'ZED_ITEM_ID',
+  'CONTINUE_SESSION_ID', 'CONTINUE_SERVER_HOST', 'CONTINUE_VERSION',
+  'AMAZON_Q_SESSION_ID', 'Q_DEVELOPER_SESSION', 'AWS_CODEWHISPERER_SESSION', 'AMAZON_Q_VERSION',
 ];
 
 beforeEach(() => {
@@ -176,6 +182,33 @@ describe('PlatformRegistry', () => {
       expect(detected!.platformName).toBe('copilot');
     });
 
+    it('selects Zed adapter when Zed env vars are present', () => {
+      process.env.ZED_SESSION_ID = 'zed-abc';
+      const registry = createDefaultRegistry();
+
+      const detected = registry.detect();
+      expect(detected).not.toBeNull();
+      expect(detected!.platformName).toBe('zed');
+    });
+
+    it('selects Continue adapter when Continue env vars are present', () => {
+      process.env.CONTINUE_SESSION_ID = 'cont-abc';
+      const registry = createDefaultRegistry();
+
+      const detected = registry.detect();
+      expect(detected).not.toBeNull();
+      expect(detected!.platformName).toBe('continue');
+    });
+
+    it('selects Amazon Q adapter when Amazon Q env vars are present', () => {
+      process.env.AMAZON_Q_SESSION_ID = 'q-abc';
+      const registry = createDefaultRegistry();
+
+      const detected = registry.detect();
+      expect(detected).not.toBeNull();
+      expect(detected!.platformName).toBe('amazon-q');
+    });
+
     it('falls back to generic-mcp when no specific platform detected', () => {
       const registry = createDefaultRegistry();
 
@@ -234,17 +267,43 @@ describe('createDefaultRegistry', () => {
     const registry = createDefaultRegistry();
     const registered = registry.getRegistered();
 
-    expect(registered).toHaveLength(5);
+    expect(registered).toHaveLength(8);
     expect(registered[0]).toBeInstanceOf(ClaudeCodeAdapter);
     expect(registered[1]).toBeInstanceOf(CursorAdapter);
     expect(registered[2]).toBeInstanceOf(WindsurfAdapter);
     expect(registered[3]).toBeInstanceOf(CopilotAdapter);
-    expect(registered[4]).toBeInstanceOf(GenericMcpAdapter);
+    expect(registered[4]).toBeInstanceOf(ZedAdapter);
+    expect(registered[5]).toBeInstanceOf(ContinueAdapter);
+    expect(registered[6]).toBeInstanceOf(AmazonQAdapter);
+    expect(registered[7]).toBeInstanceOf(GenericMcpAdapter);
+  });
+
+  it('includes zed, continue, and amazon-q adapters', () => {
+    const registry = createDefaultRegistry();
+    const names = registry.getRegistered().map(a => a.platformName);
+    expect(names).toContain('zed');
+    expect(names).toContain('continue');
+    expect(names).toContain('amazon-q');
+  });
+
+  it('ends with generic-mcp as fallback', () => {
+    const registry = createDefaultRegistry();
+    const adapters = registry.getRegistered();
+    expect(adapters[adapters.length - 1].platformName).toBe('generic-mcp');
   });
 });
 
 describe('all adapters implement PlatformAdapter interface', () => {
-  const adapters: PlatformAdapter[] = [new ClaudeCodeAdapter(), new CursorAdapter(), new WindsurfAdapter(), new CopilotAdapter(), new GenericMcpAdapter()];
+  const adapters: PlatformAdapter[] = [
+    new ClaudeCodeAdapter(),
+    new CursorAdapter(),
+    new WindsurfAdapter(),
+    new CopilotAdapter(),
+    new ZedAdapter(),
+    new ContinueAdapter(),
+    new AmazonQAdapter(),
+    new GenericMcpAdapter(),
+  ];
 
   for (const adapter of adapters) {
     describe(adapter.platformName, () => {

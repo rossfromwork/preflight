@@ -769,4 +769,101 @@ describe('session trace ID propagation', () => {
     const event = proxyToolCallToNrEvent(record, { developer: 'dev', appName: 'app' });
     expect(event.session_id).toBeUndefined();
   });
+
+  it('NrIngestManager.ingestBudgetWarning: emits session_id from sessionTraceId', async () => {
+    const manager = new NrIngestManager({
+      ...makeIngestOptions(),
+      sessionTraceId: TRACE_ID,
+    });
+    manager.ingestBudgetWarning({
+      period: 'session',
+      thresholdPct: 80,
+      spentUsd: 8,
+      budgetUsd: 10,
+      timestamp: Date.now(),
+    });
+    manager.start();
+    await manager.stop();
+
+    const sentEvents = (mockSendEvents.mock.calls[0] as unknown[])[0] as Array<Record<string, unknown>>;
+    const budgetEvent = sentEvents.find(e => e.eventType === 'AiBudgetWarning');
+    expect(budgetEvent?.session_id).toBe(TRACE_ID);
+  });
+
+  it('NrIngestManager.ingestBudgetWarning: omits session_id when no sessionTraceId', async () => {
+    const manager = new NrIngestManager(makeIngestOptions());
+    manager.ingestBudgetWarning({
+      period: 'daily',
+      thresholdPct: 100,
+      spentUsd: 10,
+      budgetUsd: 10,
+      timestamp: Date.now(),
+    });
+    manager.start();
+    await manager.stop();
+
+    const sentEvents = (mockSendEvents.mock.calls[0] as unknown[])[0] as Array<Record<string, unknown>>;
+    const budgetEvent = sentEvents.find(e => e.eventType === 'AiBudgetWarning');
+    expect(budgetEvent?.session_id).toBeUndefined();
+  });
+
+  it('toolCallToNrEvent: includes team_id when teamId is non-null', () => {
+    const record = makeRecord();
+    const event = toolCallToNrEvent(record, {
+      developer: 'dev',
+      appName: 'app',
+      teamId: 'engineering',
+    });
+    expect(event.team_id).toBe('engineering');
+  });
+
+  it('toolCallToNrEvent: omits team_id when teamId is null', () => {
+    const record = makeRecord();
+    const event = toolCallToNrEvent(record, {
+      developer: 'dev',
+      appName: 'app',
+      teamId: null,
+    });
+    expect(event.team_id).toBeUndefined();
+  });
+
+  it('toolCallToNrEvent: includes project_id when projectId is non-null', () => {
+    const record = makeRecord();
+    const event = toolCallToNrEvent(record, {
+      developer: 'dev',
+      appName: 'app',
+      projectId: 'myorg/myrepo',
+    });
+    expect(event.project_id).toBe('myorg/myrepo');
+  });
+
+  it('toolCallToNrEvent: omits project_id when projectId is null', () => {
+    const record = makeRecord();
+    const event = toolCallToNrEvent(record, {
+      developer: 'dev',
+      appName: 'app',
+      projectId: null,
+    });
+    expect(event.project_id).toBeUndefined();
+  });
+
+  it('toolCallToNrEvent: includes org_id when orgId is non-null', () => {
+    const record = makeRecord();
+    const event = toolCallToNrEvent(record, {
+      developer: 'dev',
+      appName: 'app',
+      orgId: 'acme-corp',
+    });
+    expect(event.org_id).toBe('acme-corp');
+  });
+
+  it('toolCallToNrEvent: omits org_id when orgId is null', () => {
+    const record = makeRecord();
+    const event = toolCallToNrEvent(record, {
+      developer: 'dev',
+      appName: 'app',
+      orgId: null,
+    });
+    expect(event.org_id).toBeUndefined();
+  });
 });

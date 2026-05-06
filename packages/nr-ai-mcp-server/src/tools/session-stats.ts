@@ -19,6 +19,7 @@ import { createLogger } from '@nr-ai-observatory/shared';
 const logger = createLogger('session-stats');
 import type { SessionTracker } from '../metrics/session-tracker.js';
 import type { CostTracker } from '../metrics/cost-tracker.js';
+import type { BudgetTracker } from '../metrics/budget-tracker.js';
 import type { TaskDetector } from '../metrics/task-detector.js';
 import type { AntiPatternDetector } from '../metrics/anti-patterns.js';
 import type { EfficiencyScorer } from '../metrics/efficiency-score.js';
@@ -29,7 +30,16 @@ import type { CollaborationProfiler } from '../metrics/collaboration-profile.js'
 import type { ClaudeMdTracker } from '../metrics/claudemd-tracker.js';
 import type { CostPerOutcomeAnalyzer } from '../metrics/cost-per-outcome.js';
 import type { RecommendationEngine } from '../metrics/recommendation-engine.js';
-import { REPORT_TOKENS_TOOL, handleReportTokens, COST_BREAKDOWN_TOOL, handleGetCostBreakdown } from './cost-tools.js';
+import {
+  REPORT_TOKENS_TOOL,
+  handleReportTokens,
+  COST_BREAKDOWN_TOOL,
+  handleGetCostBreakdown,
+  BUDGET_STATUS_TOOL,
+  COST_FORECAST_TOOL,
+  handleGetBudgetStatus,
+  handleGetCostForecast,
+} from './cost-tools.js';
 import type { TokenReport } from './cost-tools.js';
 import {
   WORKFLOW_TRACE_TOOL,
@@ -51,6 +61,10 @@ import {
   COST_PER_OUTCOME_TOOL,
   RECOMMENDATIONS_TOOL,
   PLATFORM_COMPARISON_TOOL,
+  TEAM_SUMMARY_TOOL,
+  SUBSCRIBE_DIGEST_TOOL,
+  UNSUBSCRIBE_DIGEST_TOOL,
+  SEND_DIGEST_TOOL,
   handleGetSessionHistory,
   handleGetWeeklySummary,
   handleGetTrends,
@@ -59,7 +73,25 @@ import {
   handleGetCostPerOutcome,
   handleGetRecommendations,
   handleGetPlatformComparison,
+  handleGetTeamSummary,
+  handleSubscribeDigest,
+  handleUnsubscribeDigest,
+  handleSendDigest,
 } from './cross-session-tools.js';
+import type { ContextWindowTracker } from '../metrics/context-window-tracker.js';
+import type { LatencyTracker } from '../metrics/latency-tracker.js';
+import type { TaskCompletionTracker } from '../metrics/task-completion-tracker.js';
+import type { ModelUsageTracker } from '../metrics/model-usage-tracker.js';
+import {
+  CONTEXT_EFFICIENCY_TOOL,
+  LATENCY_PERCENTILES_TOOL,
+  TASK_COMPLETION_TOOL,
+  MODEL_USAGE_TOOL,
+  handleGetContextEfficiency,
+  handleGetLatencyPercentiles,
+  handleGetTaskCompletionRate,
+  handleGetModelUsage,
+} from './analytics-tools.js';
 
 // ---------------------------------------------------------------------------
 // Tool definitions (for tools/list)
@@ -156,6 +188,7 @@ export function handleGetSessionTimeline(
 export interface ToolRegistrationOptions {
   sessionTracker?: SessionTracker;
   costTracker?: CostTracker;
+  budgetTracker?: BudgetTracker;
   taskDetector?: TaskDetector;
   antiPatternDetector?: AntiPatternDetector;
   efficiencyScorer?: EfficiencyScorer;
@@ -167,7 +200,16 @@ export interface ToolRegistrationOptions {
   claudeMdTracker?: ClaudeMdTracker;
   costPerOutcomeAnalyzer?: CostPerOutcomeAnalyzer;
   recommendationEngine?: RecommendationEngine;
+  contextWindowTracker?: ContextWindowTracker;
+  latencyTracker?: LatencyTracker;
+  taskCompletionTracker?: TaskCompletionTracker;
+  modelUsageTracker?: ModelUsageTracker;
   sessionTraceId?: string;
+  sessionStartMs?: number;
+  accountId?: string;
+  teamId?: string | null;
+  nrApiKey?: string | null;
+  configFilePath?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -191,6 +233,7 @@ export function registerTools(
   const {
     sessionTracker,
     costTracker,
+    budgetTracker,
     taskDetector,
     antiPatternDetector,
     efficiencyScorer,
@@ -202,7 +245,12 @@ export function registerTools(
     claudeMdTracker,
     costPerOutcomeAnalyzer,
     recommendationEngine,
+    contextWindowTracker,
+    latencyTracker,
+    taskCompletionTracker,
+    modelUsageTracker,
     sessionTraceId,
+    sessionStartMs,
   } = options;
 
   // Build combined tool list
@@ -212,6 +260,12 @@ export function registerTools(
   }
   if (costTracker) {
     tools.push(REPORT_TOKENS_TOOL, COST_BREAKDOWN_TOOL);
+  }
+  if (budgetTracker) {
+    tools.push(BUDGET_STATUS_TOOL);
+  }
+  if (costTracker && sessionStartMs !== undefined) {
+    tools.push(COST_FORECAST_TOOL);
   }
   if (taskDetector) {
     tools.push(WORKFLOW_TRACE_TOOL);
@@ -248,6 +302,28 @@ export function registerTools(
   if (recommendationEngine) {
     tools.push(RECOMMENDATIONS_TOOL);
   }
+  if (options.teamId && options.nrApiKey) {
+    tools.push(TEAM_SUMMARY_TOOL);
+  }
+  if (options.configFilePath) {
+    tools.push(SUBSCRIBE_DIGEST_TOOL, UNSUBSCRIBE_DIGEST_TOOL);
+  }
+  if (options.configFilePath && weeklySummaryGenerator) {
+    tools.push(SEND_DIGEST_TOOL);
+  }
+
+  if (contextWindowTracker) {
+    tools.push(CONTEXT_EFFICIENCY_TOOL);
+  }
+  if (latencyTracker) {
+    tools.push(LATENCY_PERCENTILES_TOOL);
+  }
+  if (taskCompletionTracker) {
+    tools.push(TASK_COMPLETION_TOOL);
+  }
+  if (modelUsageTracker) {
+    tools.push(MODEL_USAGE_TOOL);
+  }
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
 
@@ -271,11 +347,19 @@ export function registerTools(
 
       case 'nr_observe_report_tokens':
         if (!costTracker) break;
-        return handleReportTokens(costTracker, args as unknown as TokenReport);
+        return handleReportTokens(costTracker, args as unknown as TokenReport, modelUsageTracker);
 
       case 'nr_observe_get_cost_breakdown':
         if (!costTracker) break;
         return handleGetCostBreakdown(costTracker, taskDetector);
+
+      case 'nr_observe_get_budget_status':
+        if (!budgetTracker) break;
+        return handleGetBudgetStatus(budgetTracker);
+
+      case 'nr_observe_get_cost_forecast':
+        if (!costTracker || sessionStartMs === undefined) break;
+        return handleGetCostForecast(costTracker, sessionStartMs);
 
       case 'nr_observe_get_workflow_trace': {
         if (!taskDetector) break;
@@ -367,6 +451,52 @@ export function registerTools(
           weeks: pcArgs.weeks as number | undefined,
         });
       }
+
+      case 'nr_observe_get_team_summary': {
+        if (!options.teamId || !options.nrApiKey) break;
+        const summaryArgs = (args ?? {}) as Record<string, unknown>;
+        return handleGetTeamSummary({
+          teamId: options.teamId,
+          accountId: options.accountId ?? '',
+          nrApiKey: options.nrApiKey,
+          since: summaryArgs.since as string | undefined,
+        });
+      }
+
+      case 'nr_observe_subscribe_digest': {
+        if (!options.configFilePath) break;
+        const digestArgs = (args ?? {}) as Record<string, unknown>;
+        return handleSubscribeDigest(
+          typeof digestArgs.webhookUrl === 'string' ? digestArgs.webhookUrl : '',
+          options.configFilePath,
+        );
+      }
+
+      case 'nr_observe_unsubscribe_digest': {
+        if (!options.configFilePath) break;
+        return handleUnsubscribeDigest(options.configFilePath);
+      }
+
+      case 'nr_observe_send_digest': {
+        if (!options.configFilePath || !weeklySummaryGenerator) break;
+        return handleSendDigest(weeklySummaryGenerator, options.configFilePath);
+      }
+
+      case 'nr_observe_get_context_efficiency':
+        if (!contextWindowTracker) break;
+        return handleGetContextEfficiency(contextWindowTracker);
+
+      case 'nr_observe_get_latency_percentiles':
+        if (!latencyTracker) break;
+        return handleGetLatencyPercentiles(latencyTracker);
+
+      case 'nr_observe_get_task_completion_rate':
+        if (!taskCompletionTracker) break;
+        return handleGetTaskCompletionRate(taskCompletionTracker, taskDetector);
+
+      case 'nr_observe_get_model_usage':
+        if (!modelUsageTracker) break;
+        return handleGetModelUsage(modelUsageTracker);
     }
 
     throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);

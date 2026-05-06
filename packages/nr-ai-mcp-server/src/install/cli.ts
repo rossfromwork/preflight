@@ -140,6 +140,14 @@ export function createInstallProgram(): Command {
     .option('--project', 'Remove from project-level .claude/settings.json instead of user-level')
     .action(handleUninstall);
 
+  program
+    .command('setup')
+    .description('Interactive first-run setup: configure New Relic keys, install hooks, and deploy dashboards')
+    .action(async () => {
+      const { runSetupWizard } = await import('./setup-wizard.js');
+      await runSetupWizard();
+    });
+
   return program;
 }
 

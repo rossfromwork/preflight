@@ -30,9 +30,25 @@ Each wrapper follows the same pattern: intercept calls, record latency and token
 
 ---
 
+## ✅ Step 0 — Extend the `provider` union in `types.ts`
+
+**Do this first before writing any wrapper.** Both `AiRequestRecord` and `AiEmbeddingRecord` in `packages/nr-ai-agent/src/types.ts` have a `provider` field typed as a narrow union. Add all three new providers:
+
+```typescript
+// Before (in both interfaces):
+provider: 'anthropic' | 'google' | 'openai';
+
+// After:
+provider: 'anthropic' | 'google' | 'openai' | 'bedrock' | 'mistral' | 'cohere';
+```
+
+This must be done before any wrapper file is compiled, otherwise TypeScript will reject `provider: 'bedrock'` etc. as an invalid assignment.
+
+---
+
 ## Wrapper 1: AWS Bedrock
 
-### Step 1a — Add Bedrock model pricing
+### ✅ Step 1a — Add Bedrock model pricing
 
 Open `packages/shared/src/pricing-data.ts`. Add after the OpenAI block:
 
@@ -94,12 +110,18 @@ Open `packages/shared/src/pricing-data.ts`. Add after the OpenAI block:
 },
 ```
 
-### Step 1b — Add Bedrock as peer + dev dependency
+### ✅ Step 1b — Add Bedrock as peer + dev dependency
 
-In `packages/nr-ai-agent/package.json`:
+In `packages/nr-ai-agent/package.json`, add to the `peerDependencies` block (version string only — optional flag goes in `peerDependenciesMeta`), add to `peerDependenciesMeta`, and add to `devDependencies`:
 
 ```json
 "peerDependencies": {
+  "@anthropic-ai/sdk": ">=0.20.0",
+  "@google/genai": ">=1.0.0",
+  "openai": ">=4.0.0",
+  "@aws-sdk/client-bedrock-runtime": ">=3.0.0"
+},
+"peerDependenciesMeta": {
   "@anthropic-ai/sdk": { "optional": true },
   "@google/genai": { "optional": true },
   "openai": { "optional": true },
@@ -110,7 +132,7 @@ In `packages/nr-ai-agent/package.json`:
 }
 ```
 
-### Step 1c — Create `packages/nr-ai-agent/src/wrappers/bedrock.ts`
+### ✅ Step 1c — Create `packages/nr-ai-agent/src/wrappers/bedrock.ts`
 
 The AWS Bedrock SDK requires a `BedrockRuntimeClient` and two commands:
 - `InvokeModelCommand` — non-streaming, sends JSON body, receives JSON response
@@ -182,12 +204,18 @@ Same shape as in the Anthropic wrapper. Key fields:
 - `requestModel: input.modelId ?? ''`
 - `topK: null` (Converse API does not expose this)
 - `thinkingEnabled: false` (Bedrock Converse does not expose thinking config)
+- `systemPrompt: shouldCapture ? truncate(extractSystemPromptText(input), config.contentMaxLength) : null`
+- `lastUserMessage: shouldCapture ? truncate(extractLastUserMessage(input.messages), config.contentMaxLength) : null`
+
+`AiRequestRecord` requires both `systemPrompt` and `lastUserMessage` fields (they must be `string | null`, never `undefined`). Always include them — set to `null` when content capture is off.
 
 #### `wrapConverse()`
 
 Wraps the `client.send(new ConverseCommand(...))` call pattern. Since `BedrockRuntimeClient.send()` is a generic method, the wrapper replaces it by monkey-patching or by returning a new object with the intercepted `send()`. The recommended approach:
 
 ```typescript
+type SendFn = (...args: unknown[]) => Promise<unknown>;
+
 export function wrapBedrockClient(
   client: BedrockRuntimeClient,
   config: WrapperConfig,
@@ -195,7 +223,7 @@ export function wrapBedrockClient(
 ): BedrockRuntimeClient {
   if (!config.enabled) return client;
 
-  const originalSend = client.send.bind(client);
+  const originalSend = client.send.bind(client) as SendFn;
 
   (client as { send: unknown }).send = async function wrappedSend(
     command: unknown,
@@ -208,7 +236,7 @@ export function wrapBedrockClient(
       return await interceptConverseStream(command, originalSend, config, onRecord, args);
     }
     // Pass through all other commands unmodified
-    return (originalSend as Function)(command, ...args);
+    return originalSend(command, ...args);
   };
 
   return client;
@@ -220,7 +248,7 @@ export function wrapBedrockClient(
 ```typescript
 async function interceptConverse(
   command: ConverseCommand,
-  originalSend: Function,
+  originalSend: SendFn,
   config: WrapperConfig,
   onRecord: RecordHandler,
   extraArgs: unknown[],
@@ -286,7 +314,7 @@ The `ConverseStreamCommand` response is an async iterable of `ConverseStreamOutp
 ```typescript
 async function interceptConverseStream(
   command: ConverseStreamCommand,
-  originalSend: Function,
+  originalSend: SendFn,
   config: WrapperConfig,
   onRecord: RecordHandler,
   extraArgs: unknown[],
@@ -367,7 +395,7 @@ Key cases (mock `BedrockRuntimeClient.send`):
 
 ## Wrapper 2: Mistral
 
-### Step 2a — Add Mistral pricing
+### ✅ Step 2a — Add Mistral pricing
 
 In `packages/shared/src/pricing-data.ts`:
 
@@ -405,13 +433,23 @@ In `packages/shared/src/pricing-data.ts`:
 },
 ```
 
-### Step 2b — Add peer + dev dependency
+### ✅ Step 2b — Add peer + dev dependency
+
+In `packages/nr-ai-agent/package.json`, add to `peerDependencies`, `peerDependenciesMeta`, and `devDependencies`:
 
 ```json
-"@mistralai/mistralai": ">=1.0.0"
+"peerDependencies": {
+  "@mistralai/mistralai": ">=1.0.0"
+},
+"peerDependenciesMeta": {
+  "@mistralai/mistralai": { "optional": true }
+},
+"devDependencies": {
+  "@mistralai/mistralai": "^1.0.0"
+}
 ```
 
-### Step 2c — Create `packages/nr-ai-agent/src/wrappers/mistral.ts`
+### ✅ Step 2c — Create `packages/nr-ai-agent/src/wrappers/mistral.ts`
 
 The Mistral SDK provides `client.chat.complete({ model, messages })` (non-streaming) and `client.chat.stream({ model, messages })` (streaming, returns an async iterable).
 
@@ -465,7 +503,7 @@ Same cases as `openai.test.ts`:
 
 ## Wrapper 3: Cohere
 
-### Step 3a — Add Cohere pricing
+### ✅ Step 3a — Add Cohere pricing
 
 ```typescript
 // ---- Cohere ----
@@ -491,13 +529,23 @@ Same cases as `openai.test.ts`:
 },
 ```
 
-### Step 3b — Add peer + dev dependency
+### ✅ Step 3b — Add peer + dev dependency
+
+In `packages/nr-ai-agent/package.json`, add to `peerDependencies`, `peerDependenciesMeta`, and `devDependencies`:
 
 ```json
-"cohere-ai": ">=7.0.0"
+"peerDependencies": {
+  "cohere-ai": ">=7.0.0"
+},
+"peerDependenciesMeta": {
+  "cohere-ai": { "optional": true }
+},
+"devDependencies": {
+  "cohere-ai": "^7.0.0"
+}
 ```
 
-### Step 3c — Create `packages/nr-ai-agent/src/wrappers/cohere.ts`
+### ✅ Step 3c — Create `packages/nr-ai-agent/src/wrappers/cohere.ts`
 
 The Cohere SDK provides `client.chat({ model, message, chatHistory })` (non-streaming) and `client.chatStream({ model, message, chatHistory })` (streaming).
 
@@ -578,9 +626,11 @@ Same structure as OpenAI and Mistral tests. Key additions:
 
 ---
 
-## Step 4 — Export all three wrappers from `nr-ai-agent`
+## ✅ Step 4 — Wire all three wrappers into `nr-ai-agent`
 
-In `packages/nr-ai-agent/src/agent.ts`, add exports:
+Four changes are required in `packages/nr-ai-agent/src/agent.ts`.
+
+### ✅ 4a — Add module-level re-exports
 
 ```typescript
 export { wrapBedrockClient } from './wrappers/bedrock.js';
@@ -588,30 +638,105 @@ export { wrapMistralClient } from './wrappers/mistral.js';
 export { wrapCohereClient } from './wrappers/cohere.js';
 ```
 
+Also add the corresponding imports at the top of the file (alongside the existing `wrapAnthropic`, `wrapGemini`, `wrapOpenAI` imports):
+
+```typescript
+import { wrapBedrockClient as wrapBedrock } from './wrappers/bedrock.js';
+import { wrapMistralClient as wrapMistral } from './wrappers/mistral.js';
+import { wrapCohereClient as wrapCohere } from './wrappers/cohere.js';
+```
+
+Also import the three SDK client types (they are peer deps, so use `import type`):
+
+```typescript
+import type { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
+import type { Mistral } from '@mistralai/mistralai';
+import type { CohereClient } from 'cohere-ai';
+```
+
+### ✅ 4b — Add instance methods to `NrAiAgent`
+
+The existing wrappers all expose instance methods on `NrAiAgent` (`wrapAnthropicClient`, `wrapOpenAiClient`, `wrapGeminiClient`). Add the same for the three new providers, following the identical pattern:
+
+```typescript
+wrapBedrockClient(client: BedrockRuntimeClient): BedrockRuntimeClient {
+  if (!this.config.enabled) return client;
+  const onRecord: RecordHandler = (record) => { this.ingestRequestRecord(record); };
+  return wrapBedrock(client, this.wrapperConfig, onRecord);
+}
+
+wrapMistralClient(client: Mistral): Mistral {
+  if (!this.config.enabled) return client;
+  const onRecord: RecordHandler = (record) => { this.ingestRequestRecord(record); };
+  return wrapMistral(client, this.wrapperConfig, onRecord);
+}
+
+wrapCohereClient(client: CohereClient): CohereClient {
+  if (!this.config.enabled) return client;
+  const onRecord: RecordHandler = (record) => { this.ingestRequestRecord(record); };
+  return wrapCohere(client, this.wrapperConfig, onRecord);
+}
+```
+
+### ✅ 4c — Update `resolveRequestMethod`
+
+`ingestRequestRecord` calls `resolveRequestMethod(record)` to determine the `requestMethod` NR event field. This function currently only handles `'anthropic'`, `'openai'`, and falls through to `'google'`. You must:
+
+1. Extend the return type union to include the new method names.
+2. Add branches for the three new providers.
+
+```typescript
+function resolveRequestMethod(
+  record: AiRequestRecord,
+): 'messages.create' | 'messages.stream' | 'models.generateContent' | 'models.generateContentStream' | 'chat.completions.create' | 'converse' | 'converse-stream' | 'chat.complete' | 'chat.stream' | 'chat' | 'chatStream' {
+  if (record.provider === 'anthropic') {
+    return record.streaming ? 'messages.stream' : 'messages.create';
+  }
+  if (record.provider === 'openai') {
+    return 'chat.completions.create';
+  }
+  if (record.provider === 'bedrock') {
+    return record.streaming ? 'converse-stream' : 'converse';
+  }
+  if (record.provider === 'mistral') {
+    return record.streaming ? 'chat.stream' : 'chat.complete';
+  }
+  if (record.provider === 'cohere') {
+    return record.streaming ? 'chatStream' : 'chat';
+  }
+  // google
+  return record.streaming ? 'models.generateContentStream' : 'models.generateContent';
+}
+```
+
 ---
 
-## Acceptance criteria
+## ✅ Acceptance criteria
 
 ### All three wrappers
-- [ ] `npm run build` passes with no TypeScript errors
-- [ ] `npm test` passes — all new test files pass
-- [ ] `wrapBedrockClient`, `wrapMistralClient`, `wrapCohereClient` are exported from `nr-ai-agent`
-- [ ] Non-streaming and streaming paths both call `onRecord` exactly once per request
-- [ ] Error paths call `onRecord` and re-throw
-- [ ] `config.enabled = false` returns client unmodified
-- [ ] `highSecurity = true` forces all content fields to null
-- [ ] `record.provider` is `'bedrock'`, `'mistral'`, `'cohere'` respectively
-- [ ] Token counts are correctly extracted from each SDK's response shape
-- [ ] All new models appear in `DEFAULT_PRICING_TABLE` with positive prices
-- [ ] `npm run lint` passes
+- [x] `npm run build` passes with no TypeScript errors
+- [x] `npm test` passes — all new test files pass
+- [x] `types.ts` provider union includes `'bedrock' | 'mistral' | 'cohere'`
+- [x] `wrapBedrockClient`, `wrapMistralClient`, `wrapCohereClient` are exported from `nr-ai-agent`
+- [x] `NrAiAgent` has `wrapBedrockClient`, `wrapMistralClient`, `wrapCohereClient` instance methods
+- [x] `resolveRequestMethod` handles all three new providers without falling through to `'google'`
+- [x] Non-streaming and streaming paths both call `onRecord` exactly once per request
+- [x] Error paths call `onRecord` and re-throw
+- [x] `config.enabled = false` returns client unmodified
+- [x] `highSecurity = true` forces all content fields (`systemPrompt`, `lastUserMessage`, `responseText`) to null
+- [x] `record.provider` is `'bedrock'`, `'mistral'`, `'cohere'` respectively
+- [x] `record.systemPrompt` and `record.lastUserMessage` are never `undefined` — always `string | null`
+- [x] Token counts are correctly extracted from each SDK's response shape
+- [x] All new models appear in `DEFAULT_PRICING_TABLE` with positive prices
+- [x] `npm run lint` passes
 
 ### Bedrock specifically
-- [ ] Non-Converse commands pass through unmodified (no interception)
-- [ ] Streaming token counts come from the `metadata` event, not accumulated delta count
+- [x] Non-Converse commands pass through unmodified (no interception)
+- [x] Streaming token counts come from the `metadata` event, not accumulated delta count
 
 ### Cohere specifically
-- [ ] `mapStopReason` correctly normalizes Cohere finish reasons
-- [ ] `preamble` (system prompt) length is captured when present
+- [x] `mapStopReason` correctly normalizes Cohere finish reasons
+- [x] `preamble` (system prompt) length is captured when present
 
 ---
 
@@ -631,7 +756,8 @@ packages/nr-ai-agent/src/wrappers/cohere.test.ts
 Files to **modify**:
 
 ```
+packages/nr-ai-agent/src/types.ts     — extend provider union in AiRequestRecord + AiEmbeddingRecord
 packages/shared/src/pricing-data.ts   — add Bedrock, Mistral, Cohere model entries
-packages/nr-ai-agent/src/agent.ts     — export 3 new wrappers
-packages/nr-ai-agent/package.json     — add 3 peer + dev dependencies
+packages/nr-ai-agent/src/agent.ts     — add imports, 3 instance methods, update resolveRequestMethod
+packages/nr-ai-agent/package.json     — add 3 peer + dev dependencies + peerDependenciesMeta entries
 ```

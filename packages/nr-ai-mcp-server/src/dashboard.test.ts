@@ -13,7 +13,7 @@ interface Widget {
   layout: { column: number; row: number; width: number; height: number };
   visualization: { id: string };
   rawConfiguration: {
-    nrqlQueries: Array<{ accountIds: number[]; query: string }>;
+    nrqlQueries?: Array<{ accountIds: number[]; query: string }>;
     [key: string]: unknown;
   };
 }
@@ -39,6 +39,7 @@ function getAllQueries(dashboard: Dashboard): string[] {
   const queries: string[] = [];
   for (const page of dashboard.pages) {
     for (const widget of page.widgets) {
+      if (!widget.rawConfiguration.nrqlQueries) continue;
       for (const nrql of widget.rawConfiguration.nrqlQueries) {
         queries.push(nrql.query);
       }
@@ -70,8 +71,11 @@ describe.each(dashboards)('Dashboard: $file', ({ dashboard }) => {
         expect(widget.layout.width).toBeGreaterThan(0);
         expect(widget.layout.height).toBeGreaterThan(0);
         expect(widget.visualization.id).toBeTruthy();
-        expect(Array.isArray(widget.rawConfiguration.nrqlQueries)).toBe(true);
-        expect(widget.rawConfiguration.nrqlQueries.length).toBeGreaterThan(0);
+        // Skip markdown widgets which don't have nrqlQueries
+        if (widget.visualization.id !== 'viz.markdown') {
+          expect(Array.isArray(widget.rawConfiguration.nrqlQueries)).toBe(true);
+          expect(widget.rawConfiguration.nrqlQueries!.length).toBeGreaterThan(0);
+        }
       }
     }
   });
@@ -109,6 +113,7 @@ describe.each(dashboards)('Dashboard: $file', ({ dashboard }) => {
   it('all accountIds arrays are empty (deploy script injects them)', () => {
     for (const page of dashboard.pages) {
       for (const widget of page.widgets) {
+        if (!widget.rawConfiguration.nrqlQueries) continue;
         for (const nrql of widget.rawConfiguration.nrqlQueries) {
           expect(nrql.accountIds).toEqual([]);
         }
@@ -215,10 +220,10 @@ describe('Platform Comparison dashboard', () => {
 
   it('all non-billboard NRQL queries include FACET platform for cross-platform comparison', () => {
     const widgets = platformComparison!.dashboard.pages[0].widgets.filter(
-      w => w.visualization.id !== 'viz.billboard' && w.visualization.id !== 'viz.markdown'
+      w => w.visualization.id !== 'viz.billboard' && w.visualization.id !== 'viz.markdown' && w.rawConfiguration.nrqlQueries
     );
     for (const widget of widgets) {
-      for (const nrql of widget.rawConfiguration.nrqlQueries) {
+      for (const nrql of widget.rawConfiguration.nrqlQueries!) {
         expect(nrql.query).toMatch(/FACET.*platform/i);
       }
     }
@@ -235,6 +240,29 @@ describe('Platform Comparison dashboard', () => {
       w => w.visualization.id === 'viz.markdown'
     );
     expect(markdownWidgets.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('Manager View dashboard', () => {
+  const managerView = dashboards.find(d => d.file === 'ai-coding-assistant-manager-view.json');
+
+  it('exists', () => expect(managerView).toBeDefined());
+
+  it('has the correct name', () => {
+    expect(managerView!.dashboard.name).toBe('AI Coding Assistant — Manager View');
+  });
+
+  it('includes FACET developer queries for per-developer breakdown', () => {
+    const queries = getAllQueries(managerView!.dashboard);
+    const developerFacetQueries = queries.filter(q => q.includes('FACET developer'));
+    expect(developerFacetQueries.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('does not include tool-call content fields', () => {
+    const queries = getAllQueries(managerView!.dashboard);
+    for (const q of queries) {
+      expect(q).not.toMatch(/system_prompt|last_user_message|response_text/i);
+    }
   });
 });
 

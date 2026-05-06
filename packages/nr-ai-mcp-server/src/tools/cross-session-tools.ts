@@ -1,20 +1,22 @@
 /**
- * MCP tool definitions and handlers for cross-session analytics.
+ * MCP tool definitions and handlers for cross-session analytics and digest delivery.
  *
- * Defines 7 tools:
- *   - nr_observe_get_session_history     — paginated session list
- *   - nr_observe_get_weekly_summary      — weekly aggregate report
- *   - nr_observe_get_trends              — metric trends over time
- *   - nr_observe_get_collaboration_profile — developer collaboration dimensions
- *   - nr_observe_get_claudemd_impact     — CLAUDE.md change impact
- *   - nr_observe_get_cost_per_outcome    — cost attribution by outcome type
- *   - nr_observe_get_recommendations     — unified recommendations
+ * Tools: nr_observe_get_session_history, nr_observe_get_weekly_summary,
+ *   nr_observe_get_trends, nr_observe_get_collaboration_profile,
+ *   nr_observe_get_claudemd_impact, nr_observe_get_cost_per_outcome,
+ *   nr_observe_get_recommendations, nr_observe_get_platform_comparison,
+ *   nr_observe_get_team_summary, nr_observe_subscribe_digest,
+ *   nr_observe_unsubscribe_digest, nr_observe_send_digest
  *
  * Tool defs and handlers are exported for integration into the main
  * registerTools() in session-stats.ts.
  */
 
+import { readFileSync, writeFileSync } from 'node:fs';
+
 import type { SessionStore } from '../storage/session-store.js';
+import { formatSlackDigest } from '../digest/digest-formatter.js';
+import { sendSlackDigest } from '../digest/digest-sender.js';
 import type { WeeklySummaryGenerator } from '../storage/weekly-summary.js';
 import { getIsoWeekId } from '../storage/weekly-summary.js';
 import type { TrendAnalyzer } from '../metrics/trend-analyzer.js';
@@ -23,6 +25,8 @@ import type { ClaudeMdTracker } from '../metrics/claudemd-tracker.js';
 import type { CostPerOutcomeAnalyzer } from '../metrics/cost-per-outcome.js';
 import type { TaskDetector } from '../metrics/task-detector.js';
 import type { RecommendationEngine } from '../metrics/recommendation-engine.js';
+
+const NERDGRAPH_URL = 'https://api.newrelic.com/graphql';
 
 // ---------------------------------------------------------------------------
 // Tool definitions
@@ -175,6 +179,49 @@ export const PLATFORM_COMPARISON_TOOL = {
   annotations: { readOnlyHint: true },
 };
 
+export const TEAM_SUMMARY_TOOL = {
+  name: 'nr_observe_get_team_summary',
+  description:
+    'Get aggregated AI coding cost and efficiency metrics for all developers in the configured team, queried via New Relic NRQL. Requires teamId to be set in config.',
+  inputSchema: {
+    type: 'object' as const,
+    properties: {
+      since: {
+        type: 'string',
+        description: 'Time window (e.g. "7 days ago", "1 day ago"). Default: "7 days ago".',
+      },
+    },
+  },
+  annotations: { readOnlyHint: true },
+};
+
+export const SUBSCRIBE_DIGEST_TOOL = {
+  name: 'nr_observe_subscribe_digest',
+  description: 'Register a Slack webhook URL to receive weekly AI coding cost and efficiency summaries.',
+  inputSchema: {
+    type: 'object' as const,
+    properties: {
+      webhookUrl: { type: 'string', description: 'Slack incoming webhook URL (https://hooks.slack.com/...)' },
+    },
+    required: ['webhookUrl'],
+  },
+  annotations: { readOnlyHint: false },
+};
+
+export const UNSUBSCRIBE_DIGEST_TOOL = {
+  name: 'nr_observe_unsubscribe_digest',
+  description: 'Remove the registered Slack webhook for weekly digests.',
+  inputSchema: { type: 'object' as const, properties: {} },
+  annotations: { readOnlyHint: false },
+};
+
+export const SEND_DIGEST_TOOL = {
+  name: 'nr_observe_send_digest',
+  description: 'Generate the current weekly AI coding summary and POST it to the configured Slack webhook immediately.',
+  inputSchema: { type: 'object' as const, properties: {} },
+  annotations: { readOnlyHint: false },
+};
+
 // ---------------------------------------------------------------------------
 // All tool definitions (for conditional registration)
 // ---------------------------------------------------------------------------
@@ -188,6 +235,7 @@ export const CROSS_SESSION_TOOLS = [
   COST_PER_OUTCOME_TOOL,
   RECOMMENDATIONS_TOOL,
   PLATFORM_COMPARISON_TOOL,
+  TEAM_SUMMARY_TOOL,
 ];
 
 // ---------------------------------------------------------------------------
@@ -500,4 +548,198 @@ export function handleGetPlatformComparison(
       text: JSON.stringify({ metric, weeks, platforms: comparison }, null, 2),
     }],
   };
+}
+
+export async function handleGetTeamSummary(
+  options: {
+    teamId: string | null;
+    accountId: string;
+    nrApiKey: string | null;
+    since?: string;
+  },
+): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
+  if (!options.teamId) {
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          error: 'teamId is not configured. Set NEW_RELIC_AI_TEAM_ID or teamId in config.',
+        }),
+      }],
+    };
+  }
+
+  if (!options.nrApiKey) {
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          error: 'NEW_RELIC_API_KEY (User key) is required for team summary queries.',
+        }),
+      }],
+    };
+  }
+
+  // Validate `since` against a strict allowlist: "<N> <unit>(s) ago"
+  const rawSince = options.since ?? '7 days ago';
+  if (!/^\d+\s+(?:minute|hour|day|week)s?\s+ago$/i.test(rawSince)) {
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          error: 'Invalid since value. Use a relative time like "7 days ago", "24 hours ago", or "1 week ago".',
+        }),
+      }],
+    };
+  }
+  const since = rawSince;
+
+  // Escape single quotes in teamId before embedding in NRQL string literals
+  const safeTeamId = options.teamId.replace(/'/g, "\\'");
+
+  const accountId = parseInt(options.accountId, 10);
+
+  const nerdgraphQuery = `query($accountId: Int!, $nrql: String!) {
+    actor { account(id: $accountId) { nrql(query: $nrql) { results } } }
+  }`;
+
+  async function runNrql(nrql: string): Promise<Array<Record<string, unknown>>> {
+    const resp = await fetch(NERDGRAPH_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'API-Key': options.nrApiKey! },
+      body: JSON.stringify({ query: nerdgraphQuery, variables: { accountId, nrql } }),
+    });
+    if (!resp.ok) {
+      throw new Error(`NerdGraph request failed: HTTP ${resp.status} ${resp.statusText}`);
+    }
+    const json = await resp.json() as { data?: { actor: { account: { nrql: { results: unknown[] } } } }; errors?: unknown[] };
+    if (json.errors && Array.isArray(json.errors) && json.errors.length > 0) {
+      const msg = (json.errors as Array<{ message?: unknown }>).map(e => String(e.message ?? e)).join('; ');
+      throw new Error(`NerdGraph errors: ${msg}`);
+    }
+    return (json.data?.actor.account.nrql.results ?? []) as Array<Record<string, unknown>>;
+  }
+
+  let costRows: Array<Record<string, unknown>>;
+  let effRows: Array<Record<string, unknown>>;
+  let antiPatternRows: Array<Record<string, unknown>>;
+  try {
+    [costRows, effRows, antiPatternRows] = await Promise.all([
+      runNrql(
+        `SELECT sum(ai.cost.session_total_usd.sum) AS totalCost
+         FROM Metric WHERE team_id = '${safeTeamId}'
+         SINCE ${since} FACET developer LIMIT 50`,
+      ),
+      runNrql(
+        `SELECT average(ai.efficiency.score.sum) AS avgScore
+         FROM Metric WHERE team_id = '${safeTeamId}'
+         SINCE ${since} FACET developer LIMIT 50`,
+      ),
+      runNrql(
+        `SELECT count(*) AS antiPatterns
+         FROM AiAntiPattern WHERE team_id = '${safeTeamId}'
+         SINCE ${since} FACET developer LIMIT 50`,
+      ),
+    ]);
+  } catch (err) {
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          error: `Failed to query New Relic: ${err instanceof Error ? err.message : String(err)}`,
+        }),
+      }],
+    };
+  }
+
+  const byDev: Record<string, { costUsd: number; efficiencyScore: number | null; antiPatterns: number }> = {};
+  for (const row of costRows) {
+    const dev = String(row.developer ?? 'unknown');
+    if (!byDev[dev]) byDev[dev] = { costUsd: 0, efficiencyScore: null, antiPatterns: 0 };
+    byDev[dev].costUsd = Number(row.totalCost ?? 0);
+  }
+  for (const row of effRows) {
+    const dev = String(row.developer ?? 'unknown');
+    if (!byDev[dev]) byDev[dev] = { costUsd: 0, efficiencyScore: null, antiPatterns: 0 };
+    byDev[dev].efficiencyScore = row.avgScore != null ? Number(row.avgScore) : null;
+  }
+  for (const row of antiPatternRows) {
+    const dev = String(row.developer ?? 'unknown');
+    if (!byDev[dev]) byDev[dev] = { costUsd: 0, efficiencyScore: null, antiPatterns: 0 };
+    byDev[dev].antiPatterns = Number(row.antiPatterns ?? 0);
+  }
+
+  const result = {
+    teamId: options.teamId,
+    since,
+    developers: Object.entries(byDev).map(([developer, stats]) => ({ developer, ...stats })),
+    totals: {
+      costUsd: Object.values(byDev).reduce((s, d) => s + d.costUsd, 0),
+      developerCount: Object.keys(byDev).length,
+    },
+  };
+
+  return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+}
+
+export function handleSubscribeDigest(
+  webhookUrl: string,
+  configFilePath: string,
+): { content: Array<{ type: 'text'; text: string }> } {
+  if (!webhookUrl.startsWith('https://hooks.slack.com/')) {
+    return { content: [{ type: 'text', text: JSON.stringify({ error: 'webhookUrl must be a Slack incoming webhook URL (https://hooks.slack.com/...)' }) }] };
+  }
+  try {
+    let existing: Record<string, unknown> = {};
+    try { existing = JSON.parse(readFileSync(configFilePath, 'utf-8')) as Record<string, unknown>; } catch { /* no existing config */ }
+    existing.digestWebhookUrl = webhookUrl;
+    writeFileSync(configFilePath, JSON.stringify(existing, null, 2), { mode: 0o600 });
+    return { content: [{ type: 'text', text: JSON.stringify({ ok: true, message: 'Webhook registered. Digest will be sent on the configured schedule.' }) }] };
+  } catch (err) {
+    return { content: [{ type: 'text', text: JSON.stringify({ error: String(err) }) }] };
+  }
+}
+
+export function handleUnsubscribeDigest(
+  configFilePath: string,
+): { content: Array<{ type: 'text'; text: string }> } {
+  try {
+    let existing: Record<string, unknown> = {};
+    try { existing = JSON.parse(readFileSync(configFilePath, 'utf-8')) as Record<string, unknown>; } catch { /* no existing config */ }
+    delete existing.digestWebhookUrl;
+    writeFileSync(configFilePath, JSON.stringify(existing, null, 2), { mode: 0o600 });
+    return { content: [{ type: 'text', text: JSON.stringify({ ok: true, message: 'Webhook removed.' }) }] };
+  } catch (err) {
+    return { content: [{ type: 'text', text: JSON.stringify({ error: String(err) }) }] };
+  }
+}
+
+export async function handleSendDigest(
+  weeklySummaryGenerator: WeeklySummaryGenerator,
+  configFilePath: string,
+): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
+  // Read webhook URL from config file at call time (not in-memory config, which won't
+  // reflect updates made via nr_observe_subscribe_digest without a server restart).
+  let webhookUrl: string | undefined;
+  try {
+    const raw = JSON.parse(readFileSync(configFilePath, 'utf-8')) as Record<string, unknown>;
+    if (typeof raw.digestWebhookUrl === 'string') {
+      webhookUrl = raw.digestWebhookUrl;
+    }
+  } catch { /* config file may not exist yet */ }
+
+  if (!webhookUrl) {
+    return { content: [{ type: 'text', text: JSON.stringify({ error: 'No webhook URL configured. Call nr_observe_subscribe_digest first.' }) }] };
+  }
+
+  const currentWeek = getIsoWeekId(new Date());
+  const summary = weeklySummaryGenerator.generate(currentWeek);
+  const payload = formatSlackDigest(summary);
+
+  try {
+    await sendSlackDigest(webhookUrl, payload);
+    return { content: [{ type: 'text', text: JSON.stringify({ ok: true, week: currentWeek, message: 'Digest sent successfully.' }) }] };
+  } catch (err) {
+    return { content: [{ type: 'text', text: JSON.stringify({ error: `Failed to send digest: ${err instanceof Error ? err.message : String(err)}` }) }] };
+  }
 }
