@@ -321,6 +321,7 @@ async function main(): Promise<void> {
       accountId: config.accountId,
       teamId: config.teamId,
       nrApiKey: config.nrApiKey,
+      collectorHost: config.collectorHost,
       configFilePath: resolve(config.storagePath, 'config.json'),
     });
 

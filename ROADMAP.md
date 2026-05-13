@@ -22,6 +22,11 @@ This document tracks planned features and improvements. Each section links to a 
 14. [Developer-Scoped Alert Deployments](#14-developer-scoped-alert-deployments)
 15. [Personal Coaching MCP Tool](#15-personal-coaching-mcp-tool)
 16. [GitHub App Integration](#16-github-app-integration)
+17. [GenAI Semantic Convention Mapping](#17-genai-semantic-convention-mapping)
+18. [OTLP Transport Option](#18-otlp-transport-option)
+19. [OTel Spans in SDK Wrappers](#19-otel-spans-in-sdk-wrappers)
+20. [MCP Tool Call Tracing](#20-mcp-tool-call-tracing)
+21. [OTLP Input in Proxy Mode](#21-otlp-input-in-proxy-mode)
 
 ---
 
@@ -159,9 +164,9 @@ Four new tracker classes following the established metric tracker pattern:
 
 ---
 
-## 9. Team and Org Analytics
+## ✅ 9. Team and Org Analytics
 
-**Status:** Planned
+**Status:** Done
 **Implementation plan:** [docs/roadmap/09-team-org-analytics.md](docs/roadmap/09-team-org-analytics.md)
 
 Lift the single-developer model to support team-level aggregation. Telemetry is tagged with a `teamId` and `projectId` derived from git remote URL and config. A separate read-only "manager dashboard" shows cost allocation by developer, project, and sprint without exposing tool-call content.
@@ -299,6 +304,90 @@ A GitHub App that posts AI coding cost and efficiency reports directly on pull r
 - Config via env vars: `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET`, `NEW_RELIC_API_KEY`, `NEW_RELIC_ACCOUNT_ID`
 - Optional `NR_AI_REPORT_HOURS` (default `24`) and `NR_AI_REPORT_FAIL_BELOW` quality gate (sets commit status)
 - GitHub App manifest and setup instructions in `packages/nr-ai-github-app/README.md`
+
+---
+
+## 17. GenAI Semantic Convention Mapping
+
+**Status:** Planned
+**Implementation plan:** [docs/roadmap/17-genai-semantic-conventions.md](docs/roadmap/17-genai-semantic-conventions.md)
+
+Enrich all `AiRequest` and `AiResponse` NR events with the standardized `gen_ai.*` attributes defined by the OpenTelemetry GenAI semantic conventions. Additive change — existing custom field names are preserved. The new attributes (`gen_ai.system`, `gen_ai.request.model`, `gen_ai.usage.input_tokens`, etc.) make NR's out-of-the-box AI monitoring views work automatically and enable cross-platform NRQL queries using standardized names.
+
+**Scope:**
+- Two mapping tables in `packages/shared/src/events/serialize.ts`: `PROVIDER_TO_GENAI_SYSTEM` and `METHOD_TO_GENAI_OPERATION`
+- Extend `aiRequestToNrEvent()` with `gen_ai.system`, `gen_ai.request.model`, `gen_ai.operation.name`, `gen_ai.request.max_tokens`, `gen_ai.request.temperature`, `gen_ai.request.top_p`, `gen_ai.request.stream`
+- Extend `aiResponseToNrEvent()` with `gen_ai.system`, `gen_ai.response.model`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `gen_ai.usage.reasoning.output_tokens`, `gen_ai.usage.cache_read.input_tokens`, `gen_ai.usage.cache_creation.input_tokens`, `gen_ai.response.finish_reason`
+- Tests asserting every new attribute is present (and absent when the source value is null/zero)
+
+---
+
+## 18. OTLP Transport Option
+
+**Status:** Planned
+**Implementation plan:** [docs/roadmap/18-otlp-transport.md](docs/roadmap/18-otlp-transport.md)
+
+Add an OTLP/HTTP transport as an optional alternative or complement to the existing NR Events API + Metric API transports. When `otlpEndpoint` is configured, telemetry can be routed to any OpenTelemetry-compatible backend (Datadog, Honeycomb, Grafana Cloud, self-hosted OTel Collector, or NR's own OTLP ingest). The default `nr-events-api` path is unchanged; OTLP is strictly additive. A `transport: 'both'` mode sends to both simultaneously.
+
+**Scope:**
+- New `OtlpTransport` class in `packages/shared/src/transport/otlp-transport.ts` (wraps OTel SDK `BasicTracerProvider` + `BatchSpanProcessor`)
+- New `OtlpEventBridge` in `packages/shared/src/transport/otlp-event-bridge.ts` (converts `NrEventData[]` to OTel log records via `LoggerProvider`)
+- Config fields: `otlpEndpoint`, `otlpHeaders`, `transport: 'nr-events-api' | 'otlp' | 'both'` in both `AgentConfig` and `McpServerConfig`
+- `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_EXPORTER_OTLP_HEADERS` env var support (standard OTel variable names)
+- `HarvestScheduler` routing updated to dispatch based on `transport` config
+- OTel SDK packages added as dependencies to `packages/shared`
+- Wire-up in `NrAiAgent` (`agent.ts`) and `NrIngestManager` (`nr-ingest.ts`)
+
+---
+
+## 19. OTel Spans in SDK Wrappers
+
+**Status:** Planned
+**Implementation plan:** [docs/roadmap/19-otel-spans-sdk-wrappers.md](docs/roadmap/19-otel-spans-sdk-wrappers.md)
+
+Make `nr-ai-agent` emit proper OpenTelemetry trace spans from all six SDK wrappers (Anthropic, Gemini, OpenAI, Bedrock, Mistral, Cohere), following the GenAI semantic conventions. This fills the gap in the OTel ecosystem — no official auto-instrumentation packages exist for these SDKs. Each LLM call becomes a span named `"{operation} {model}"` with `gen_ai.*` request and response attributes. When OTLP is not configured, the OTel no-op tracer is used so there is zero overhead.
+
+**Scope:**
+- New `packages/nr-ai-agent/src/tracing.ts` — `initTracer()` / `getTracer()` module singleton
+- New `packages/nr-ai-agent/src/span-attributes.ts` — `buildSpanName()`, `buildRequestAttributes()`, `buildResponseAttributes()` helpers
+- All six wrappers extended to start a span before the SDK call and end it in success/error callbacks (streaming spans end after the last chunk)
+- Error spans call `span.recordException()` and set `SpanStatusCode.ERROR`
+- `agent.ts` calls `initTracer()` when `transport !== 'nr-events-api'`
+- Existing `AiRequestRecord` emission via `onRecord` is untouched
+
+---
+
+## 20. MCP Tool Call Tracing
+
+**Status:** Planned
+**Implementation plan:** [docs/roadmap/20-mcp-tool-call-tracing.md](docs/roadmap/20-mcp-tool-call-tracing.md)
+
+Trace every Claude Code tool call as an OpenTelemetry span, creating the first-ever OTel instrumentation for MCP sessions. The span hierarchy mirrors session structure: a root session span contains task spans (from `TaskDetector` boundaries), which contain individual tool call spans. Each span carries `mcp.tool.name`, `mcp.tool.use_id`, `ai.session.id`, `ai.task.id`, and duration. The resulting waterfall in any OTel backend shows exactly what the AI coding assistant did, task by task, tool by tool.
+
+**Scope:**
+- New `packages/nr-ai-mcp-server/src/tracing/` directory with four modules: `mcp-tracer.ts`, `session-span.ts`, `tool-call-span.ts`, `task-span-tracker.ts`
+- `SessionSpan` manages the root span lifecycle (start at server startup, end at shutdown with `tool_call_count` and `task_count`)
+- `TaskSpanTracker` opens/closes intermediate task spans based on `TaskDetector` boundary events
+- `emitToolCallSpan()` creates a child span from each completed `ToolCallRecord`; failed records set `ERROR` status
+- `TaskDetector` extended with `getActiveTaskId()` to expose current task for span parenting
+- Wired into `NrMcpServer` — guards on `transport !== 'nr-events-api'` so tracing is zero-cost when OTLP is disabled
+
+---
+
+## 21. OTLP Input in Proxy Mode
+
+**Status:** Planned
+**Implementation plan:** [docs/roadmap/21-otlp-proxy-input.md](docs/roadmap/21-otlp-proxy-input.md)
+
+When running in proxy mode, start a local OTLP/HTTP receiver (default port 4318) that accepts telemetry from any OTel-instrumented application on the developer's machine. The receiver enriches every received resource with the current session context (`ai.session.id`, `ai.developer`, `ai.project_id`) and forwards the enriched payload to NR's OTLP ingest endpoint. This makes the observatory act as a local OTel Collector that ties AI-coded application spans back to the coding session that produced them.
+
+**Scope:**
+- New `OtlpReceiver` class in `packages/nr-ai-mcp-server/src/proxy/otlp-receiver.ts` — HTTP server accepting `POST /v1/traces`, `/v1/metrics`, `/v1/logs`
+- JSON-encoded OTLP payloads have enrichment attributes injected into all `resourceSpans` / `resourceMetrics` / `resourceLogs` resource arrays; protobuf payloads are forwarded as-is
+- SSRF guard: `otlpForwardEndpoint` validated against RFC-1918/loopback at startup; receiver disabled with warning if invalid
+- Config fields: `otlpReceiverEnabled` (default `false`), `otlpReceiverPort` (default `4318`), `otlpForwardEndpoint` (default NR US OTLP endpoint)
+- `OtlpReceiver` started/stopped in `ProxyManager` alongside the existing proxy HTTP server
+- `NR_AI_OTLP_RECEIVER_ENABLED`, `NR_AI_OTLP_RECEIVER_PORT`, `NR_AI_OTLP_FORWARD_ENDPOINT` env vars
 
 ---
 

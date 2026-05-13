@@ -209,6 +209,7 @@ export interface ToolRegistrationOptions {
   accountId?: string;
   teamId?: string | null;
   nrApiKey?: string | null;
+  collectorHost?: string | null;
   configFilePath?: string;
 }
 
@@ -459,6 +460,7 @@ export function registerTools(
           teamId: options.teamId,
           accountId: options.accountId ?? '',
           nrApiKey: options.nrApiKey,
+          collectorHost: options.collectorHost,
           since: summaryArgs.since as string | undefined,
         });
       }

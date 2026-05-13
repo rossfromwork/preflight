@@ -26,7 +26,11 @@ import type { CostPerOutcomeAnalyzer } from '../metrics/cost-per-outcome.js';
 import type { TaskDetector } from '../metrics/task-detector.js';
 import type { RecommendationEngine } from '../metrics/recommendation-engine.js';
 
-const NERDGRAPH_URL = 'https://api.newrelic.com/graphql';
+function getNerdgraphUrl(collectorHost: string | null): string {
+  if (collectorHost === 'staging') return 'https://staging-api.newrelic.com/graphql';
+  if (collectorHost === 'eu') return 'https://api.eu.newrelic.com/graphql';
+  return 'https://api.newrelic.com/graphql';
+}
 
 // ---------------------------------------------------------------------------
 // Tool definitions
@@ -555,6 +559,7 @@ export async function handleGetTeamSummary(
     teamId: string | null;
     accountId: string;
     nrApiKey: string | null;
+    collectorHost?: string | null;
     since?: string;
   },
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
@@ -599,12 +604,14 @@ export async function handleGetTeamSummary(
 
   const accountId = parseInt(options.accountId, 10);
 
-  const nerdgraphQuery = `query($accountId: Int!, $nrql: String!) {
+  const nerdgraphQuery = `query($accountId: Int!, $nrql: Nrql!) {
     actor { account(id: $accountId) { nrql(query: $nrql) { results } } }
   }`;
 
+  const nerdgraphUrl = getNerdgraphUrl(options.collectorHost ?? null);
+
   async function runNrql(nrql: string): Promise<Array<Record<string, unknown>>> {
-    const resp = await fetch(NERDGRAPH_URL, {
+    const resp = await fetch(nerdgraphUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'API-Key': options.nrApiKey! },
       body: JSON.stringify({ query: nerdgraphQuery, variables: { accountId, nrql } }),
