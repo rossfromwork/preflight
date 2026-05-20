@@ -119,6 +119,32 @@ export default {
   // Default: "info"
   logLevel: 'info',
 
+  // ── OTLP/HTTP transport (optional — for Datadog, Grafana Cloud, etc.) ───────
+
+  // OTLP/HTTP endpoint URL. When set, telemetry is also exported via OTLP.
+  // For New Relic OTLP endpoints:
+  //   US: https://otlp.nr-data.net
+  //   EU: https://otlp.eu01.nr-data.net
+  // For other backends (Datadog, Grafana Cloud, Honeycomb), use their OTLP endpoint.
+  // Env: OTEL_EXPORTER_OTLP_ENDPOINT
+  // Default: null (disabled)
+  otlpEndpoint: null,
+
+  // Additional HTTP headers for OTLP exporter (e.g., authentication).
+  // For New Relic OTLP, use: { "api-key": "<NR_LICENSE_KEY>" }
+  // For Datadog, use: { "dd-api-key": "<DATADOG_API_KEY>" }
+  // Env: OTEL_EXPORTER_OTLP_HEADERS (comma-separated key=value pairs, e.g. "api-key=xxx,other=yyy")
+  // Default: {}
+  otlpHeaders: {},
+
+  // Transport mode when otlpEndpoint is configured.
+  // - 'nr-events-api' (default): NR Events API + Metric API only
+  // - 'otlp': OTLP/HTTP only (requires otlpEndpoint)
+  // - 'both': NR Events API + OTLP simultaneously
+  // Env: NEW_RELIC_AI_TRANSPORT
+  // Default: "nr-events-api"
+  transport: 'nr-events-api',
+
   // ── NR User API key (for team summary NerdGraph queries) ──────────────────
 
   // User API key (NRAK-...). Required only for nr_observe_get_team_summary.

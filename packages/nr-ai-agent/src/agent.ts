@@ -20,6 +20,8 @@ import {
   aiAntiPatternToNrEvent,
   aiAgentMessageToNrEvent,
   aiContextResetToNrEvent,
+  OtlpTransport,
+  OtlpEventBridge,
 } from '@nr-ai-observatory/shared';
 import type { AiResponse, AiAgentTaskSummary, AiAgentMessage, AiContextReset } from '@nr-ai-observatory/shared';
 import { AgenticTracer } from './agentic/tracer.js';
@@ -50,6 +52,7 @@ import { CustomMetricsManager } from './api/custom-metrics.js';
 import type { CustomSpan } from './api/custom-metrics.js';
 import { OTelExporter } from './export/otel.js';
 import type { AgentConfig } from '@nr-ai-observatory/shared';
+import { initTracer } from './tracing.js';
 import { wrapAnthropicClient as wrapAnthropic } from './wrappers/anthropic.js';
 import { wrapGeminiClient as wrapGemini } from './wrappers/gemini.js';
 import { wrapOpenAiClient as wrapOpenAI } from './wrappers/openai.js';
@@ -133,6 +136,7 @@ export class NrAiAgent {
   private readonly concludedExperiments = new Set<string>();
   private readonly customMetrics: CustomMetricsManager;
   private readonly otelExporter: OTelExporter;
+  private readonly otlpTransport: OtlpTransport | null;
   private readonly taskSummaryListener: (e: Event) => void;
   private readonly agentMessageListener: (e: Event) => void;
   private readonly contextResetListener: (e: Event) => void;
@@ -202,6 +206,7 @@ export class NrAiAgent {
     });
     this.customMetrics = new CustomMetricsManager(config.appName ?? 'nr-ai-agent');
     this.otelExporter = new OTelExporter();
+    this.otlpTransport = null;
 
     this.taskSummaryListener = (e: Event) => {
       const summary = (e as CustomEvent<AiAgentTaskSummary>).detail;
@@ -282,6 +287,26 @@ export class NrAiAgent {
 
     initPricing(config.customPricingFile);
 
+    let otlpTransport: OtlpTransport | null = null;
+    let otlpEventBridge: OtlpEventBridge | null = null;
+
+    if (config.otlpEndpoint) {
+      const appName = config.appName ?? 'nr-ai-agent';
+      otlpTransport = new OtlpTransport({
+        endpoint: config.otlpEndpoint,
+        headers: config.otlpHeaders,
+        appName,
+      });
+      otlpEventBridge = new OtlpEventBridge({
+        endpoint: config.otlpEndpoint,
+        headers: config.otlpHeaders,
+        appName,
+      });
+      otlpTransport.start();
+      initTracer();
+    }
+    this.otlpTransport = otlpTransport;
+
     this.scheduler = new HarvestScheduler({
       licenseKey: config.licenseKey,
       transportOptions: {
@@ -290,6 +315,9 @@ export class NrAiAgent {
       },
       sendEventsFn: sendEvents,
       sendMetricsFn: sendMetrics,
+      otlpEventBridge: otlpEventBridge ?? undefined,
+      otlpTransport: otlpTransport ?? undefined,
+      transport: config.transport,
     });
 
     this.scheduler.start();
@@ -562,6 +590,9 @@ export class NrAiAgent {
     this.conversationStore.shutdown();
     if (this.scheduler) {
       await this.scheduler.stop();
+    }
+    if (this.otlpTransport) {
+      await this.otlpTransport.shutdown();
     }
     initPromise = null;
     logger.info('Agent shut down');

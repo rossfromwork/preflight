@@ -20,10 +20,12 @@ Foundational transport layer for NR AI Observatory. Handles event creation, toke
 - `loadCustomPricing()` — optional custom pricing override
 
 ### Harvest & Transport
-- `HarvestScheduler` — batches and periodically flushes events/metrics
+- `HarvestScheduler` — batches and periodically flushes events/metrics; routes based on `transport` config
 - `EventBuffer` — in-memory event queue with bounded retry
 - `MetricAggregator` — aggregates metrics by name and attributes
 - HTTP clients for Events API, Metric API, Logs API
+- `OtlpTransport` — wraps OTel SDK for OTLP/HTTP trace and metric export
+- `OtlpEventBridge` — converts `NrEventData[]` to OTel log records for OTLP delivery
 
 ### Logging
 - `createLogger()` — structured JSON logging to stderr

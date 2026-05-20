@@ -1,6 +1,8 @@
+import { SpanStatusCode, type Tracer } from '@opentelemetry/api';
 import { wrapOpenAiClient } from './openai.js';
 import type { AiRequestRecord, WrapperConfig, RecordHandler } from '../types.js';
 import type OpenAI from 'openai';
+import * as tracing from '../tracing.js';
 
 interface MockCompletions {
   create: jest.Mock;
@@ -709,6 +711,58 @@ describe('wrapOpenAiClient', () => {
       );
 
       expect(records[0].toolNames[0]).toBe('toolwithnewline');
+    });
+  });
+
+  describe('span lifecycle', () => {
+    let mockSpan: { setAttributes: jest.Mock; setStatus: jest.Mock; recordException: jest.Mock; end: jest.Mock };
+    let mockTracer: { startSpan: jest.Mock };
+
+    beforeEach(() => {
+      mockSpan = {
+        setAttributes: jest.fn(),
+        setStatus: jest.fn(),
+        recordException: jest.fn(),
+        end: jest.fn(),
+      };
+      mockTracer = { startSpan: jest.fn(() => mockSpan) };
+      jest.spyOn(tracing, 'getTracer').mockReturnValue(mockTracer as unknown as Tracer);
+    });
+
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it('starts and ends a span on success', async () => {
+      const completion = makeCompletion();
+      const client = makeMockClient();
+      client.chat.completions.create.mockResolvedValue(completion);
+
+      const config = makeConfig();
+      const { handler } = makeRecorder();
+
+      wrapOpenAiClient(client as unknown as OpenAI, config, handler);
+      await client.chat.completions.create(makeCreateParams());
+
+      expect(mockTracer.startSpan).toHaveBeenCalledTimes(1);
+      expect(mockSpan.end).toHaveBeenCalledTimes(1);
+      expect(mockSpan.setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.OK });
+    });
+
+    it('records exception and ends span on error', async () => {
+      const error = new Error('SDK error');
+      const client = makeMockClient();
+      client.chat.completions.create.mockRejectedValue(error);
+
+      const config = makeConfig();
+      const { handler } = makeRecorder();
+
+      wrapOpenAiClient(client as unknown as OpenAI, config, handler);
+      await expect(client.chat.completions.create(makeCreateParams())).rejects.toThrow('SDK error');
+
+      expect(mockSpan.recordException).toHaveBeenCalledWith(error);
+      expect(mockSpan.setStatus).toHaveBeenCalledWith(expect.objectContaining({ code: SpanStatusCode.ERROR }));
+      expect(mockSpan.end).toHaveBeenCalledTimes(1);
     });
   });
 });

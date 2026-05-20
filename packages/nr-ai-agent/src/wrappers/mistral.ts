@@ -1,4 +1,5 @@
 import type { Mistral } from '@mistralai/mistralai';
+import { SpanStatusCode } from '@opentelemetry/api';
 import { randomUUID } from 'node:crypto';
 import { RequestTimer } from '@nr-ai-observatory/shared';
 import type { RequestTimerMetrics } from '@nr-ai-observatory/shared';
@@ -6,6 +7,8 @@ import { extractReasoningMetrics } from '../metrics/reasoning.js';
 import { generateConversationIdFromMessages } from '../metrics/conversation.js';
 import { detectModalities } from '../metrics/multimodal.js';
 import type { AiRequestRecord, WrapperConfig, RecordHandler } from '../types.js';
+import { getTracer } from '../tracing.js';
+import { buildSpanName, buildRequestAttributes, buildResponseAttributes } from '../span-attributes.js';
 
 function truncate(text: string, maxLength: number): string {
   return text.length > maxLength ? text.slice(0, maxLength) : text;
@@ -204,15 +207,26 @@ function wrapComplete(
     const timer = new RequestTimer();
     timer.start();
 
+    const tracer = getTracer();
+    const span = tracer.startSpan(buildSpanName(base), {
+      attributes: buildRequestAttributes(base),
+    });
+
     try {
       const response = await original(params);
       timer.stop();
       const record = finalizeRecord(base, response, timer.getMetrics(), config);
       onRecord(record);
+      span.setAttributes(buildResponseAttributes(record));
+      span.setStatus({ code: SpanStatusCode.OK });
+      span.end();
       return response;
     } catch (err) {
       const record = buildErrorRecord(base, err, timer, config);
       onRecord(record);
+      span.recordException(err instanceof Error ? err : new Error(String(err)));
+      span.setStatus({ code: SpanStatusCode.ERROR, message: record.error?.message ?? 'Unknown error' });
+      span.end();
       throw err;
     }
   } as Mistral['chat']['complete'];
@@ -230,6 +244,11 @@ function wrapStream(
     const base = buildBaseRecord(params, config, 'chat.stream', true);
     const timer = new RequestTimer();
     timer.start();
+
+    const tracer = getTracer();
+    const span = tracer.startSpan(buildSpanName(base), {
+      attributes: buildRequestAttributes(base),
+    });
 
     const streamPromise = original(params);
 
@@ -301,9 +320,15 @@ function wrapStream(
           error: null,
         };
         onRecord(record);
+        span.setAttributes(buildResponseAttributes(record));
+        span.setStatus({ code: SpanStatusCode.OK });
+        span.end();
       } catch (err) {
         const record = buildErrorRecord(base, err, timer, config);
         onRecord(record);
+        span.recordException(err instanceof Error ? err : new Error(String(err)));
+        span.setStatus({ code: SpanStatusCode.ERROR, message: record.error?.message ?? 'Unknown error' });
+        span.end();
         throw err;
       }
     }

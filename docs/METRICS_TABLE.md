@@ -16,6 +16,18 @@ All telemetry flows through the `HarvestScheduler` and `LogIngestManager`:
 
 Failed batches are re-queued with bounded buffers. Oldest entries are dropped on overflow.
 
+### Transport Routing
+
+The `transport` config field controls where the `HarvestScheduler` sends telemetry:
+
+| Mode | Events | Metrics |
+|------|--------|---------|
+| `nr-events-api` (default) | NR Events API | NR Metric API |
+| `otlp` | OTLP/HTTP (as log records) | OTLP/HTTP (as gauge data points) |
+| `both` | Both simultaneously (concurrent) | Both simultaneously (concurrent) |
+
+OTLP targets any OpenTelemetry-compatible backend. New Relic OTLP: US `https://otlp.nr-data.net`, EU `https://otlp.eu01.nr-data.net`.
+
 Source: `packages/shared/src/harvest/harvest-scheduler.ts`, `packages/nr-ai-mcp-server/src/transport/log-ingest.ts`
 
 ---

@@ -1,7 +1,9 @@
+import { SpanStatusCode, type Tracer } from '@opentelemetry/api';
 import { wrapBedrockClient } from './bedrock.js';
 import type { AiRequestRecord, WrapperConfig, RecordHandler } from '../types.js';
 import { ConverseCommand, ConverseStreamCommand } from '@aws-sdk/client-bedrock-runtime';
 import type { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
+import * as tracing from '../tracing.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -455,6 +457,54 @@ describe('wrapBedrockClient', () => {
       expect(result).toEqual({ models: [] });
       expect(records).toHaveLength(0);
       expect(sendMock).toHaveBeenCalledWith(customCommand);
+    });
+  });
+
+  describe('span lifecycle', () => {
+    let mockSpan: { setAttributes: jest.Mock; setStatus: jest.Mock; recordException: jest.Mock; end: jest.Mock };
+    let mockTracer: { startSpan: jest.Mock };
+
+    beforeEach(() => {
+      mockSpan = {
+        setAttributes: jest.fn(),
+        setStatus: jest.fn(),
+        recordException: jest.fn(),
+        end: jest.fn(),
+      };
+      mockTracer = { startSpan: jest.fn(() => mockSpan) };
+      jest.spyOn(tracing, 'getTracer').mockReturnValue(mockTracer as unknown as Tracer);
+    });
+
+    it('starts and ends a span on success', async () => {
+      const response = makeConverseResponse();
+      const sendMock = jest.fn().mockResolvedValue(response);
+      const client = makeMockClient(sendMock) as unknown as BedrockRuntimeClient;
+
+      const config = makeConfig();
+      const { handler } = makeRecorder();
+
+      wrapBedrockClient(client, config, handler);
+      await client.send(new ConverseCommand(makeConverseInput() as never));
+
+      expect(mockTracer.startSpan).toHaveBeenCalledTimes(1);
+      expect(mockSpan.end).toHaveBeenCalledTimes(1);
+      expect(mockSpan.setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.OK });
+    });
+
+    it('records exception and ends span on error', async () => {
+      const error = new Error('SDK error');
+      const sendMock = jest.fn().mockRejectedValue(error);
+      const client = makeMockClient(sendMock) as unknown as BedrockRuntimeClient;
+
+      const config = makeConfig();
+      const { handler } = makeRecorder();
+
+      wrapBedrockClient(client, config, handler);
+      await expect(client.send(new ConverseCommand(makeConverseInput() as never))).rejects.toThrow('SDK error');
+
+      expect(mockSpan.recordException).toHaveBeenCalledWith(error);
+      expect(mockSpan.setStatus).toHaveBeenCalledWith(expect.objectContaining({ code: SpanStatusCode.ERROR }));
+      expect(mockSpan.end).toHaveBeenCalledTimes(1);
     });
   });
 });

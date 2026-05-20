@@ -260,6 +260,10 @@ export class TaskDetector {
     return tasks;
   }
 
+  getActiveTaskId(): string | null {
+    return this.activeTask?.taskId ?? null;
+  }
+
   getMetrics(): TaskMetrics {
     const completed = this.completedTasks;
 

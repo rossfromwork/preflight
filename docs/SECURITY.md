@@ -133,9 +133,9 @@ Follow this pattern for any new storage paths the MCP server creates.
 
 ## Network Security
 
-### SSRF protection — `packages/nr-ai-mcp-server/src/proxy/upstream-http.ts`
+### SSRF protection — `packages/nr-ai-mcp-server/src/security/ssrf.ts`
 
-Before connecting to any user-configured upstream URL, `HttpUpstream` validates:
+`validateSsrfUrl()` validates any user-configured URL against two criteria:
 
 1. **Scheme** — only `http:` and `https:` are allowed
 2. **Host** — RFC-1918 addresses (`10.*`, `172.16–31.*`, `192.168.*`), loopback (`127.*`, `::1`, `localhost`), and link-local (`169.254.*`) are rejected
@@ -145,7 +145,7 @@ if (!ALLOWED_SCHEMES.has(this.url.protocol)) throw new Error('…scheme not allo
 if (BLOCKED_HOST_RE.test(this.url.hostname)) throw new Error('…private addresses not allowed');
 ```
 
-Any new network client that takes a URL from config or user input needs the same check.
+This is used by both `HttpUpstream` (MCP proxy forwarding) and `OtlpReceiver` (`otlpForwardEndpoint` config). Any new network client that takes a URL from config or user input should call `validateSsrfUrl()` at construction time.
 
 ### Proxy body limits — `proxy-manager.ts`
 

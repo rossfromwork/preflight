@@ -1,6 +1,8 @@
+import { SpanStatusCode, type Tracer } from '@opentelemetry/api';
 import { wrapCohereClient } from './cohere.js';
 import type { AiRequestRecord, WrapperConfig, RecordHandler } from '../types.js';
 import type { CohereClient } from 'cohere-ai';
+import * as tracing from '../tracing.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -402,6 +404,54 @@ describe('wrapCohereClient', () => {
       }
 
       expect(records[0].responseText).toBeNull();
+    });
+  });
+
+  describe('span lifecycle', () => {
+    let mockSpan: { setAttributes: jest.Mock; setStatus: jest.Mock; recordException: jest.Mock; end: jest.Mock };
+    let mockTracer: { startSpan: jest.Mock };
+
+    beforeEach(() => {
+      mockSpan = {
+        setAttributes: jest.fn(),
+        setStatus: jest.fn(),
+        recordException: jest.fn(),
+        end: jest.fn(),
+      };
+      mockTracer = { startSpan: jest.fn(() => mockSpan) };
+      jest.spyOn(tracing, 'getTracer').mockReturnValue(mockTracer as unknown as Tracer);
+    });
+
+    it('starts and ends a span on success', async () => {
+      const response = makeChatResponse();
+      const client = makeMockClient() as unknown as CohereClient;
+      (client.chat as jest.Mock).mockResolvedValue(response);
+
+      const config = makeConfig();
+      const { handler } = makeRecorder();
+
+      wrapCohereClient(client, config, handler);
+      await client.chat!(makeChatParams() as never);
+
+      expect(mockTracer.startSpan).toHaveBeenCalledTimes(1);
+      expect(mockSpan.end).toHaveBeenCalledTimes(1);
+      expect(mockSpan.setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.OK });
+    });
+
+    it('records exception and ends span on error', async () => {
+      const error = new Error('SDK error');
+      const client = makeMockClient() as unknown as CohereClient;
+      (client.chat as jest.Mock).mockRejectedValue(error);
+
+      const config = makeConfig();
+      const { handler } = makeRecorder();
+
+      wrapCohereClient(client, config, handler);
+      await expect(client.chat!(makeChatParams() as never)).rejects.toThrow('SDK error');
+
+      expect(mockSpan.recordException).toHaveBeenCalledWith(error);
+      expect(mockSpan.setStatus).toHaveBeenCalledWith(expect.objectContaining({ code: SpanStatusCode.ERROR }));
+      expect(mockSpan.end).toHaveBeenCalledTimes(1);
     });
   });
 });

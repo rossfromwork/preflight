@@ -1,4 +1,6 @@
+import { SpanStatusCode, type Tracer } from '@opentelemetry/api';
 import { wrapAnthropicClient } from './anthropic.js';
+import * as tracing from '../tracing.js';
 import type { AiRequestRecord, WrapperConfig, RecordHandler } from '../types.js';
 import type Anthropic from '@anthropic-ai/sdk';
 
@@ -898,6 +900,63 @@ describe('wrapAnthropicClient', () => {
       const sdkCallArg = originalCreate.mock.calls[0][0] as Record<string, unknown>;
       expect(sdkCallArg).toBe(params); // same object reference — no copy made
       expect(records[0].requestMetadata).toEqual({ user_id: 'user-2' });
+    });
+  });
+
+  describe('span lifecycle', () => {
+    let mockSpan: { setAttributes: jest.Mock; setStatus: jest.Mock; recordException: jest.Mock; end: jest.Mock };
+    let mockTracer: { startSpan: jest.Mock };
+
+    beforeEach(() => {
+      mockSpan = {
+        setAttributes: jest.fn(),
+        setStatus: jest.fn(),
+        recordException: jest.fn(),
+        end: jest.fn(),
+      };
+      mockTracer = {
+        startSpan: jest.fn(() => mockSpan),
+      };
+      jest.spyOn(tracing, 'getTracer').mockReturnValue(mockTracer as unknown as Tracer);
+    });
+
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it('starts and ends a span on success', async () => {
+      const message = makeMessage();
+      const client = makeMockClient();
+      client.messages.create.mockResolvedValue(message);
+
+      const config = makeConfig();
+      const { handler } = makeRecorder();
+
+      wrapAnthropicClient(client as unknown as Anthropic, config, handler);
+      await client.messages.create(makeCreateParams());
+
+      expect(mockTracer.startSpan).toHaveBeenCalledTimes(1);
+      expect(mockSpan.end).toHaveBeenCalledTimes(1);
+      expect(mockSpan.setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.OK });
+    });
+
+    it('records exception and ends span on error', async () => {
+      const error = new Error('SDK error');
+      const client = makeMockClient();
+      client.messages.create.mockRejectedValue(error);
+
+      const config = makeConfig();
+      const { handler } = makeRecorder();
+
+      wrapAnthropicClient(client as unknown as Anthropic, config, handler);
+
+      await expect(client.messages.create(makeCreateParams())).rejects.toThrow('SDK error');
+
+      expect(mockSpan.recordException).toHaveBeenCalledWith(error);
+      expect(mockSpan.setStatus).toHaveBeenCalledWith(
+        expect.objectContaining({ code: SpanStatusCode.ERROR }),
+      );
+      expect(mockSpan.end).toHaveBeenCalledTimes(1);
     });
   });
 });

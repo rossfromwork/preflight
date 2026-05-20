@@ -17,6 +17,7 @@ import type {
 import { TRACKED_METHODS } from './types.js';
 import { HttpUpstream } from './upstream-http.js';
 import { StdioUpstream } from './upstream-stdio.js';
+import { OtlpReceiver } from './otlp-receiver.js';
 
 const logger = createLogger('proxy-manager');
 
@@ -32,6 +33,11 @@ export interface ProxyManagerOptions {
   readonly bodyTimeoutMs?: number;
   /** Maximum allowed request body size in bytes. Default: 10 MB. */
   readonly maxBodyBytes?: number;
+  readonly otlpReceiverEnabled?: boolean;
+  readonly otlpReceiverPort?: number;
+  readonly otlpForwardEndpoint?: string | null;
+  readonly otlpForwardHeaders?: Record<string, string>;
+  readonly otlpEnrichmentAttributes?: Record<string, string>;
 }
 
 const DEFAULT_BODY_TIMEOUT_MS = 30_000;
@@ -72,6 +78,8 @@ function peekJsonRpc(body: Buffer): JsonRpcPeek | null {
 export class ProxyManager {
   private readonly upstreams = new Map<string, ProxyUpstream>();
   private httpServer: Server | null = null;
+  private otlpReceiver: OtlpReceiver | null = null;
+  private readonly options: ProxyManagerOptions;
   private readonly port: number;
   private readonly onToolCall: ((record: ProxyToolCallRecord) => void) | undefined;
   private readonly onRequest: ((record: ProxyRequestRecord) => void) | undefined;
@@ -79,6 +87,7 @@ export class ProxyManager {
   private readonly maxBodyBytes: number;
 
   constructor(options: ProxyManagerOptions) {
+    this.options = options;
     this.port = options.port;
     this.onToolCall = options.onToolCall;
     this.onRequest = options.onRequest;
@@ -148,13 +157,28 @@ export class ProxyManager {
       });
     });
 
-    return new Promise<void>((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       this.httpServer!.once('error', reject);
       this.httpServer!.listen(this.port, '127.0.0.1', () => {
         logger.info(`Proxy server listening`, { port: this.port });
         resolve();
       });
     });
+
+    if (this.options.otlpReceiverEnabled) {
+      try {
+        const receiver = new OtlpReceiver({
+          port: this.options.otlpReceiverPort ?? 4318,
+          forwardEndpoint: this.options.otlpForwardEndpoint ?? null,
+          forwardHeaders: this.options.otlpForwardHeaders ?? {},
+          enrichmentAttributes: this.options.otlpEnrichmentAttributes ?? {},
+        });
+        await receiver.start();
+        this.otlpReceiver = receiver;
+      } catch (err) {
+        logger.warn('OTLP receiver failed to start — disabled', { error: String(err) });
+      }
+    }
   }
 
   /** Stop the HTTP server and disconnect all upstreams. */
@@ -165,6 +189,11 @@ export class ProxyManager {
         this.httpServer!.close(() => resolve());
       });
       this.httpServer = null;
+    }
+
+    if (this.otlpReceiver) {
+      await this.otlpReceiver.stop();
+      this.otlpReceiver = null;
     }
 
     // Disconnect all upstreams

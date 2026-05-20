@@ -119,7 +119,9 @@ describe('CostForecaster', () => {
     expect(forecast.projectedBudgetExceedDate).not.toBeNull();
     if (forecast.projectedBudgetExceedDate) {
       const exceedDate = new Date(forecast.projectedBudgetExceedDate);
-      const daysUntilExceed = Math.floor((exceedDate.getTime() - now) / dailySeconds);
+      const today = new Date();
+      const todayUTCMidnight = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
+      const daysUntilExceed = Math.round((exceedDate.getTime() - todayUTCMidnight) / dailySeconds);
       expect(daysUntilExceed).toBeGreaterThanOrEqual(24);
       expect(daysUntilExceed).toBeLessThanOrEqual(26);
     }

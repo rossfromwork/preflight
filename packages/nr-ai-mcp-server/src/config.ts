@@ -39,6 +39,25 @@ export interface McpServerConfig {
   readonly digestSchedule: string; // cron expression, default: "0 9 * * 1" (Monday 9am)
   readonly retainSessionsDays: number | null;
   readonly personalAlertThresholds: PersonalAlertThresholds;
+  readonly otlpEndpoint: string | null;
+  readonly otlpHeaders: Readonly<Record<string, string>>;
+  readonly transport: 'nr-events-api' | 'otlp' | 'both';
+  /** Enable the local OTLP/HTTP receiver. Default: false. */
+  readonly otlpReceiverEnabled: boolean;
+  /** Port for the local OTLP/HTTP receiver. Default: 4318. */
+  readonly otlpReceiverPort: number;
+  /**
+   * OTLP forward endpoint — where to relay received spans.
+   * Defaults to New Relic US OTLP endpoint when licenseKey is present.
+   * Set to null to disable forwarding (receive and enrich only, then drop).
+   */
+  readonly otlpForwardEndpoint: string | null;
+  /**
+   * HTTP headers added to every OTLP forward request (e.g. `{ 'api-key': licenseKey }`).
+   * Defaults to `{ 'api-key': licenseKey }` when licenseKey is present.
+   * Configurable via NR_AI_OTLP_FORWARD_HEADERS (comma-separated key=value pairs).
+   */
+  readonly otlpForwardHeaders: Readonly<Record<string, string>>;
 }
 
 const DEFAULT_STORAGE_PATH = resolve(homedir(), '.nr-ai-observe');
@@ -166,6 +185,19 @@ function isValidUpstream(u: unknown): u is UpstreamConfig {
   if (obj.transportType === 'http' && typeof obj.url !== 'string') return false;
   if (obj.transportType === 'stdio' && typeof obj.command !== 'string') return false;
   return true;
+}
+
+function parseOtlpHeaders(headerString: string | undefined): Record<string, string> {
+  if (!headerString) return {};
+  const result: Record<string, string> = {};
+  const pairs = headerString.split(',');
+  for (const pair of pairs) {
+    const [key, value] = pair.split('=');
+    if (key && value) {
+      result[key.trim()] = value.trim();
+    }
+  }
+  return result;
 }
 
 function parseProxyUpstreams(
@@ -379,6 +411,53 @@ export function loadMcpConfig(cliOptions?: Partial<CliOptions>): Readonly<McpSer
         if (Number.isFinite(v) && v > 0) return v;
       }
       return typeof file.retainSessionsDays === 'number' ? file.retainSessionsDays : null;
+    })(),
+
+    otlpEndpoint:
+      process.env.OTEL_EXPORTER_OTLP_ENDPOINT ??
+      (typeof file.otlpEndpoint === 'string' ? file.otlpEndpoint : null),
+
+    otlpHeaders: (() => {
+      const envValue = process.env.OTEL_EXPORTER_OTLP_HEADERS;
+      if (envValue) return parseOtlpHeaders(envValue);
+      return typeof file.otlpHeaders === 'object' && file.otlpHeaders !== null
+        ? (file.otlpHeaders as Record<string, string>)
+        : {};
+    })(),
+
+    transport: (
+      process.env.NEW_RELIC_AI_TRANSPORT === 'otlp' ? 'otlp'
+      : process.env.NEW_RELIC_AI_TRANSPORT === 'both' ? 'both'
+      : typeof file.transport === 'string' && (file.transport === 'otlp' || file.transport === 'both')
+      ? file.transport
+      : 'nr-events-api'
+    ),
+
+    otlpReceiverEnabled: envBool(
+      'NR_AI_OTLP_RECEIVER_ENABLED',
+      typeof file.otlpReceiverEnabled === 'boolean' ? file.otlpReceiverEnabled : false,
+    ),
+
+    otlpReceiverPort: envInt(
+      'NR_AI_OTLP_RECEIVER_PORT',
+      typeof file.otlpReceiverPort === 'number' ? file.otlpReceiverPort : 4318,
+      { min: 1, max: 65535 },
+    ),
+
+    otlpForwardEndpoint: (() => {
+      const envVal = process.env.NR_AI_OTLP_FORWARD_ENDPOINT;
+      if (envVal !== undefined) return envVal || null;
+      if (typeof file.otlpForwardEndpoint === 'string') return file.otlpForwardEndpoint || null;
+      return licenseKey ? 'https://otlp.nr-data.net' : null;
+    })(),
+
+    otlpForwardHeaders: (() => {
+      const envValue = process.env.NR_AI_OTLP_FORWARD_HEADERS;
+      if (envValue !== undefined) return parseOtlpHeaders(envValue);
+      if (typeof file.otlpForwardHeaders === 'object' && file.otlpForwardHeaders !== null) {
+        return file.otlpForwardHeaders as Record<string, string>;
+      }
+      return licenseKey ? { 'api-key': licenseKey } : {};
     })(),
 
     personalAlertThresholds: (() => {

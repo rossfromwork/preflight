@@ -7,6 +7,7 @@ import type {
   ChatCompletionMessageParam,
 } from 'openai/resources/chat/completions';
 import type { Stream } from 'openai/streaming';
+import { SpanStatusCode } from '@opentelemetry/api';
 import { randomUUID } from 'node:crypto';
 import { RequestTimer } from '@nr-ai-observatory/shared';
 import type { RequestTimerMetrics } from '@nr-ai-observatory/shared';
@@ -15,6 +16,8 @@ import { detectModalities } from '../metrics/multimodal.js';
 import { stripNrMetadata } from '../metrics/cost-attribution.js';
 import { generateConversationIdFromMessages } from '../metrics/conversation.js';
 import type { AiRequestRecord, WrapperConfig, RecordHandler } from '../types.js';
+import { getTracer } from '../tracing.js';
+import { buildSpanName, buildRequestAttributes, buildResponseAttributes } from '../span-attributes.js';
 
 type CreateFn = OpenAI['chat']['completions']['create'];
 type CreateParams = ChatCompletionCreateParamsNonStreaming | ChatCompletionCreateParamsStreaming;
@@ -235,6 +238,11 @@ function wrapChunkStream(
   let accumulatedText = '';
   let hasToolCalls = false;
 
+  const tracer = getTracer();
+  const span = tracer.startSpan(buildSpanName(base), {
+    attributes: buildRequestAttributes(base),
+  });
+
   const originalIterator = stream[Symbol.asyncIterator].bind(stream);
 
   const wrappedIterator = async function* (): AsyncGenerator<ChatCompletionChunk> {
@@ -309,9 +317,15 @@ function wrapChunkStream(
         error: null,
       };
       onRecord(record);
+      span.setAttributes(buildResponseAttributes(record));
+      span.setStatus({ code: SpanStatusCode.OK });
+      span.end();
     } catch (err) {
       const record = buildErrorRecord(base, err, timer, config);
       onRecord(record);
+      span.recordException(err instanceof Error ? err : new Error(String(err)));
+      span.setStatus({ code: SpanStatusCode.ERROR, message: record.error?.message ?? 'Unknown error' });
+      span.end();
       throw err;
     }
   };
@@ -366,6 +380,11 @@ function wrapCreate(
     const timer = new RequestTimer();
     timer.start();
 
+    const tracer = getTracer();
+    const span = tracer.startSpan(buildSpanName(base), {
+      attributes: buildRequestAttributes(base),
+    });
+
     const promise = original.call(
       this,
       cleanBody as ChatCompletionCreateParamsNonStreaming,
@@ -377,11 +396,17 @@ function wrapCreate(
         timer.stop();
         const record = finalizeRecord(base, response, timer.getMetrics(), config);
         onRecord(record);
+        span.setAttributes(buildResponseAttributes(record));
+        span.setStatus({ code: SpanStatusCode.OK });
+        span.end();
         return response;
       },
       (err) => {
         const record = buildErrorRecord(base, err, timer, config);
         onRecord(record);
+        span.recordException(err instanceof Error ? err : new Error(String(err)));
+        span.setStatus({ code: SpanStatusCode.ERROR, message: record.error?.message ?? 'Unknown error' });
+        span.end();
         throw err;
       },
     ) as ReturnType<CreateFn>;

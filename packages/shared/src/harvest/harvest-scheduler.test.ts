@@ -2,6 +2,8 @@ import { HarvestScheduler } from './harvest-scheduler.js';
 import type { HarvestSchedulerOptions } from './harvest-scheduler.js';
 import type { TransportResult, NrMetric } from '../transport/types.js';
 import type { NrEventData } from '../events/types.js';
+import type { OtlpEventBridge } from '../transport/otlp-event-bridge.js';
+import type { OtlpTransport } from '../transport/otlp-transport.js';
 
 let stderrSpy: ReturnType<typeof jest.spyOn>;
 
@@ -417,6 +419,193 @@ describe('HarvestScheduler', () => {
     const retryBatch = sendEventsFn.mock.calls[1][0] as NrEventData[];
     expect(retryBatch).toHaveLength(1);
     expect(retryBatch[0].value).toBe(1);
+
+    await scheduler.stop();
+  });
+
+  // ---------------------------------------------------------------------------
+  // 11. OTLP routing — 'otlp' mode calls otlpEventBridge.sendEvents, not NR API
+  // ---------------------------------------------------------------------------
+  it("transport: 'otlp' routes events to otlpEventBridge.sendEvents, not NR API", async () => {
+    const sendEventsFn = jest.fn<Promise<TransportResult>, unknown[]>().mockResolvedValue(successResult);
+    const otlpEventBridgeSendFn = jest.fn<void, [NrEventData[]]>();
+    const otlpEventBridge = {
+      sendEvents: otlpEventBridgeSendFn,
+      flush: jest.fn().mockResolvedValue(undefined),
+      shutdown: jest.fn().mockResolvedValue(undefined),
+    } as unknown as OtlpEventBridge;
+
+    const { scheduler } = makeScheduler({
+      sendEventsFn,
+      otlpEventBridge,
+      transport: 'otlp',
+    });
+
+    scheduler.addEvent({ eventType: 'Test', value: 1 });
+    scheduler.start();
+
+    // Advance to first harvest at 5s
+    await jest.advanceTimersByTimeAsync(5_000);
+
+    // NR sendEventsFn should NOT have been called
+    expect(sendEventsFn).not.toHaveBeenCalled();
+
+    // OTLP bridge's sendEvents should have been called once
+    expect(otlpEventBridgeSendFn).toHaveBeenCalledTimes(1);
+    const sentEvents = otlpEventBridgeSendFn.mock.calls[0][0] as NrEventData[];
+    expect(sentEvents).toHaveLength(1);
+    expect(sentEvents[0].eventType).toBe('Test');
+
+    await scheduler.stop();
+  });
+
+  // ---------------------------------------------------------------------------
+  // 12. OTLP routing — 'otlp' mode calls otlpTransport.exportMetrics, not NR API
+  // ---------------------------------------------------------------------------
+  it("transport: 'otlp' routes metrics to otlpTransport.exportMetrics, not NR API", async () => {
+    const sendMetricsFn = jest.fn<Promise<TransportResult>, unknown[]>().mockResolvedValue(successResult);
+    const otlpTransportExportFn = jest.fn<Promise<void>, [NrMetric[]]>();
+    const otlpTransport = {
+      start: jest.fn(),
+      exportMetrics: otlpTransportExportFn,
+      flush: jest.fn().mockResolvedValue(undefined),
+      shutdown: jest.fn().mockResolvedValue(undefined),
+      getTracer: jest.fn(),
+      getMeter: jest.fn(),
+    } as unknown as OtlpTransport;
+
+    const { scheduler } = makeScheduler({
+      sendMetricsFn,
+      otlpTransport,
+      transport: 'otlp',
+    });
+
+    scheduler.recordMetric('ai.duration', 100);
+    scheduler.start();
+
+    // Advance to first metric harvest at 60s
+    await jest.advanceTimersByTimeAsync(60_000);
+
+    // NR sendMetricsFn should NOT have been called
+    expect(sendMetricsFn).not.toHaveBeenCalled();
+
+    // OTLP transport's exportMetrics should have been called once
+    expect(otlpTransportExportFn).toHaveBeenCalledTimes(1);
+    const sentMetrics = otlpTransportExportFn.mock.calls[0][0] as NrMetric[];
+    expect(sentMetrics.length).toBeGreaterThan(0);
+
+    await scheduler.stop();
+  });
+
+  // ---------------------------------------------------------------------------
+  // 13. OTLP routing — 'both' mode calls both NR API and OTLP concurrently
+  // ---------------------------------------------------------------------------
+  it("transport: 'both' calls both NR API and OTLP concurrently for events", async () => {
+    const sendEventsFn = jest.fn<Promise<TransportResult>, unknown[]>().mockResolvedValue(successResult);
+    const otlpEventBridgeSendFn = jest.fn<void, [NrEventData[]]>();
+    const otlpEventBridge = {
+      sendEvents: otlpEventBridgeSendFn,
+      flush: jest.fn().mockResolvedValue(undefined),
+      shutdown: jest.fn().mockResolvedValue(undefined),
+    } as unknown as OtlpEventBridge;
+
+    const { scheduler } = makeScheduler({
+      sendEventsFn,
+      otlpEventBridge,
+      transport: 'both',
+    });
+
+    scheduler.addEvent({ eventType: 'Test', value: 1 });
+    scheduler.start();
+
+    // Advance to first harvest at 5s
+    await jest.advanceTimersByTimeAsync(5_000);
+
+    // Both NR and OTLP should have been called
+    expect(sendEventsFn).toHaveBeenCalledTimes(1);
+    expect(otlpEventBridgeSendFn).toHaveBeenCalledTimes(1);
+
+    // Both should receive the same events
+    const nrEvents = sendEventsFn.mock.calls[0][0] as NrEventData[];
+    const otlpEvents = otlpEventBridgeSendFn.mock.calls[0][0] as NrEventData[];
+    expect(nrEvents).toHaveLength(1);
+    expect(otlpEvents).toHaveLength(1);
+    expect(nrEvents[0].eventType).toBe('Test');
+    expect(otlpEvents[0].eventType).toBe('Test');
+
+    await scheduler.stop();
+  });
+
+  // ---------------------------------------------------------------------------
+  // 14. OTLP routing — 'both' mode calls both NR API and OTLP for metrics
+  // ---------------------------------------------------------------------------
+  it("transport: 'both' calls both NR API and OTLP concurrently for metrics", async () => {
+    const sendMetricsFn = jest.fn<Promise<TransportResult>, unknown[]>().mockResolvedValue(successResult);
+    const otlpTransportExportFn = jest.fn<Promise<void>, [NrMetric[]]>();
+    const otlpTransport = {
+      start: jest.fn(),
+      exportMetrics: otlpTransportExportFn,
+      flush: jest.fn().mockResolvedValue(undefined),
+      shutdown: jest.fn().mockResolvedValue(undefined),
+      getTracer: jest.fn(),
+      getMeter: jest.fn(),
+    } as unknown as OtlpTransport;
+
+    const { scheduler } = makeScheduler({
+      sendMetricsFn,
+      otlpTransport,
+      transport: 'both',
+    });
+
+    scheduler.recordMetric('ai.duration', 100);
+    scheduler.start();
+
+    // Advance to first metric harvest at 60s
+    await jest.advanceTimersByTimeAsync(60_000);
+
+    // Both NR and OTLP should have been called
+    expect(sendMetricsFn).toHaveBeenCalledTimes(1);
+    expect(otlpTransportExportFn).toHaveBeenCalledTimes(1);
+
+    // Both should receive metrics
+    const nrMetrics = sendMetricsFn.mock.calls[0][0] as NrMetric[];
+    const otlpMetrics = otlpTransportExportFn.mock.calls[0][0] as NrMetric[];
+    expect(nrMetrics.length).toBeGreaterThan(0);
+    expect(otlpMetrics.length).toBeGreaterThan(0);
+
+    await scheduler.stop();
+  });
+
+  // ---------------------------------------------------------------------------
+  // 15. Default transport mode is 'nr-events-api'
+  // ---------------------------------------------------------------------------
+  it("default transport mode is 'nr-events-api'", async () => {
+    const sendEventsFn = jest.fn<Promise<TransportResult>, unknown[]>().mockResolvedValue(successResult);
+    const otlpEventBridgeSendFn = jest.fn<void, [NrEventData[]]>();
+    const otlpEventBridge = {
+      sendEvents: otlpEventBridgeSendFn,
+      flush: jest.fn().mockResolvedValue(undefined),
+      shutdown: jest.fn().mockResolvedValue(undefined),
+    } as unknown as OtlpEventBridge;
+
+    // Don't specify transport — should default to 'nr-events-api'
+    const { scheduler } = makeScheduler({
+      sendEventsFn,
+      otlpEventBridge,
+      // transport not specified
+    });
+
+    scheduler.addEvent({ eventType: 'Test', value: 1 });
+    scheduler.start();
+
+    // Advance to first harvest at 5s
+    await jest.advanceTimersByTimeAsync(5_000);
+
+    // NR API should be called (default behavior)
+    expect(sendEventsFn).toHaveBeenCalledTimes(1);
+
+    // OTLP bridge should NOT be called (default mode doesn't use it)
+    expect(otlpEventBridgeSendFn).not.toHaveBeenCalled();
 
     await scheduler.stop();
   });

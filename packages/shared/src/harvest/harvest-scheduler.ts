@@ -1,5 +1,7 @@
 import type { NrEventData } from '../events/types.js';
 import type { NrMetric, TransportOptions, TransportResult } from '../transport/types.js';
+import type { OtlpEventBridge } from '../transport/otlp-event-bridge.js';
+import type { OtlpTransport } from '../transport/otlp-transport.js';
 import { createLogger } from '../logger.js';
 import { EventBuffer } from './event-buffer.js';
 import { MetricAggregator } from './metric-aggregator.js';
@@ -26,6 +28,9 @@ export interface HarvestSchedulerOptions {
   maxEventBufferSize?: number;
   sendEventsFn: SendEventsFn;
   sendMetricsFn: SendMetricsFn;
+  otlpEventBridge?: OtlpEventBridge;
+  otlpTransport?: OtlpTransport;
+  transport?: 'nr-events-api' | 'otlp' | 'both';
 }
 
 const DEFAULT_EVENT_HARVEST_MS = 5_000;
@@ -40,6 +45,9 @@ export class HarvestScheduler {
   private readonly sendMetricsFn: SendMetricsFn;
   private readonly eventHarvestIntervalMs: number;
   private readonly metricHarvestIntervalMs: number;
+  private readonly otlpEventBridge?: OtlpEventBridge;
+  private readonly otlpTransport?: OtlpTransport;
+  private readonly transport: 'nr-events-api' | 'otlp' | 'both';
 
   private eventIntervalId: ReturnType<typeof setInterval> | null = null;
   private metricIntervalId: ReturnType<typeof setInterval> | null = null;
@@ -61,6 +69,9 @@ export class HarvestScheduler {
     this.sendMetricsFn = options.sendMetricsFn;
     this.eventHarvestIntervalMs = options.eventHarvestIntervalMs ?? DEFAULT_EVENT_HARVEST_MS;
     this.metricHarvestIntervalMs = options.metricHarvestIntervalMs ?? DEFAULT_METRIC_HARVEST_MS;
+    this.otlpEventBridge = options.otlpEventBridge;
+    this.otlpTransport = options.otlpTransport;
+    this.transport = options.transport ?? 'nr-events-api';
 
     this.eventBuffer = new EventBuffer({ maxSize: options.maxEventBufferSize });
     this.metricAggregator = new MetricAggregator();
@@ -147,22 +158,72 @@ export class HarvestScheduler {
     this.retryEventBatch = [];
     if (batch.length === 0) return;
 
-    try {
-      const result = await this.sendEventsFn(batch, this.licenseKey, this.transportOptions);
-      if (!result.success) {
-        logger.warn('Failed to send events — re-queuing batch for retry', {
+    if (this.transport === 'nr-events-api') {
+      try {
+        const result = await this.sendEventsFn(batch, this.licenseKey, this.transportOptions);
+        if (!result.success) {
+          logger.warn('Failed to send events — re-queuing batch for retry', {
+            batchSize: batch.length,
+            error: result.error,
+          });
+          this.requeueEvents(batch);
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.warn('Unexpected error sending events — re-queuing batch for retry', {
           batchSize: batch.length,
-          error: result.error,
+          error: message,
         });
         this.requeueEvents(batch);
       }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      logger.warn('Unexpected error sending events — re-queuing batch for retry', {
-        batchSize: batch.length,
-        error: message,
-      });
-      this.requeueEvents(batch);
+    } else if (this.transport === 'otlp') {
+      try {
+        if (this.otlpEventBridge) {
+          this.otlpEventBridge.sendEvents(batch);
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.warn('Error sending events to OTLP — re-queuing batch for retry', {
+          batchSize: batch.length,
+          error: message,
+        });
+        this.requeueEvents(batch);
+      }
+    } else if (this.transport === 'both') {
+      await Promise.all([
+        (async () => {
+          try {
+            const result = await this.sendEventsFn(batch, this.licenseKey, this.transportOptions);
+            if (!result.success) {
+              logger.warn('Failed to send events to NR — re-queuing batch for retry', {
+                batchSize: batch.length,
+                error: result.error,
+              });
+              this.requeueEvents(batch);
+            }
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            logger.warn('Unexpected error sending events to NR — re-queuing batch for retry', {
+              batchSize: batch.length,
+              error: message,
+            });
+            this.requeueEvents(batch);
+          }
+        })(),
+        (async () => {
+          try {
+            if (this.otlpEventBridge) {
+              this.otlpEventBridge.sendEvents(batch);
+            }
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            logger.warn('Error sending events to OTLP', {
+              batchSize: batch.length,
+              error: message,
+            });
+          }
+        })(),
+      ]);
     }
   }
 
@@ -174,22 +235,72 @@ export class HarvestScheduler {
     this.retryMetricBatch = [];
     if (batch.length === 0) return;
 
-    try {
-      const result = await this.sendMetricsFn(batch, this.licenseKey, this.transportOptions);
-      if (!result.success) {
-        logger.warn('Failed to send metrics — re-queuing batch for retry', {
+    if (this.transport === 'nr-events-api') {
+      try {
+        const result = await this.sendMetricsFn(batch, this.licenseKey, this.transportOptions);
+        if (!result.success) {
+          logger.warn('Failed to send metrics — re-queuing batch for retry', {
+            batchSize: batch.length,
+            error: result.error,
+          });
+          this.requeueMetrics(batch);
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.warn('Unexpected error sending metrics — re-queuing batch for retry', {
           batchSize: batch.length,
-          error: result.error,
+          error: message,
         });
         this.requeueMetrics(batch);
       }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      logger.warn('Unexpected error sending metrics — re-queuing batch for retry', {
-        batchSize: batch.length,
-        error: message,
-      });
-      this.requeueMetrics(batch);
+    } else if (this.transport === 'otlp') {
+      try {
+        if (this.otlpTransport) {
+          await this.otlpTransport.exportMetrics(batch);
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.warn('Error sending metrics to OTLP — re-queuing batch for retry', {
+          batchSize: batch.length,
+          error: message,
+        });
+        this.requeueMetrics(batch);
+      }
+    } else if (this.transport === 'both') {
+      await Promise.all([
+        (async () => {
+          try {
+            const result = await this.sendMetricsFn(batch, this.licenseKey, this.transportOptions);
+            if (!result.success) {
+              logger.warn('Failed to send metrics to NR — re-queuing batch for retry', {
+                batchSize: batch.length,
+                error: result.error,
+              });
+              this.requeueMetrics(batch);
+            }
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            logger.warn('Unexpected error sending metrics to NR — re-queuing batch for retry', {
+              batchSize: batch.length,
+              error: message,
+            });
+            this.requeueMetrics(batch);
+          }
+        })(),
+        (async () => {
+          try {
+            if (this.otlpTransport) {
+              await this.otlpTransport.exportMetrics(batch);
+            }
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            logger.warn('Error sending metrics to OTLP', {
+              batchSize: batch.length,
+              error: message,
+            });
+          }
+        })(),
+      ]);
     }
   }
 

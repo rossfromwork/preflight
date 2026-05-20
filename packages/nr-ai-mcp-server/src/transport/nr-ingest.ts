@@ -4,7 +4,7 @@
  */
 
 import type { NrEventData, NrMetric, NrLogEntry, TransportOptions, TransportResult } from '@nr-ai-observatory/shared';
-import { HarvestScheduler, MetricAggregator, sendEvents, sendMetrics } from '@nr-ai-observatory/shared';
+import { HarvestScheduler, MetricAggregator, sendEvents, sendMetrics, OtlpTransport, OtlpEventBridge } from '@nr-ai-observatory/shared';
 import type { ToolCallRecord } from '../storage/types.js';
 import type { ProxyToolCallRecord, ProxyRequestRecord } from '../proxy/types.js';
 import type { AiCodingTask } from '../metrics/task-detector.js';
@@ -73,6 +73,12 @@ export interface NrIngestOptions {
   teamId?: string | null;
   projectId?: string | null;
   orgId?: string | null;
+  /** OTLP/HTTP endpoint URL. When set, telemetry is also exported via OTLP. */
+  otlpEndpoint?: string | null;
+  /** Additional HTTP headers for the OTLP exporter. */
+  otlpHeaders?: Record<string, string>;
+  /** Transport mode: 'nr-events-api', 'otlp', or 'both'. */
+  transport?: 'nr-events-api' | 'otlp' | 'both';
 }
 
 // ---------------------------------------------------------------------------
@@ -315,6 +321,7 @@ export class NrIngestManager {
   private readonly projectId: string | null | undefined;
   private readonly orgId: string | null | undefined;
   private readonly metricHarvestIntervalMs: number;
+  private readonly otlpTransport: OtlpTransport | null;
   private sessionGaugeIntervalId: ReturnType<typeof setInterval> | null = null;
   private running = false;
 
@@ -336,6 +343,24 @@ export class NrIngestManager {
     });
     this.metricHarvestIntervalMs = options.metricHarvestIntervalMs ?? 60_000;
 
+    let otlpTransport: OtlpTransport | null = null;
+    let otlpEventBridge: OtlpEventBridge | null = null;
+
+    if (options.otlpEndpoint) {
+      otlpTransport = new OtlpTransport({
+        endpoint: options.otlpEndpoint,
+        headers: options.otlpHeaders,
+        appName: options.appName,
+      });
+      otlpEventBridge = new OtlpEventBridge({
+        endpoint: options.otlpEndpoint,
+        headers: options.otlpHeaders,
+        appName: options.appName,
+      });
+      otlpTransport.start();
+    }
+    this.otlpTransport = otlpTransport;
+
     this.scheduler = new HarvestScheduler({
       licenseKey: options.licenseKey,
       transportOptions: options.transportOptions,
@@ -343,6 +368,9 @@ export class NrIngestManager {
       metricHarvestIntervalMs: options.metricHarvestIntervalMs,
       sendEventsFn: options.sendEventsFn ?? sendEvents,
       sendMetricsFn: options.sendMetricsFn ?? sendMetrics,
+      otlpEventBridge: otlpEventBridge ?? undefined,
+      otlpTransport: otlpTransport ?? undefined,
+      transport: options.transport,
     });
 
     this.logIngest = new LogIngestManager({
@@ -507,7 +535,11 @@ export class NrIngestManager {
     this.emitSessionGauges();
     this.running = false;
 
-    await Promise.all([this.scheduler.stop(), this.logIngest.stop()]);
+    const cleanupPromises = [this.scheduler.stop(), this.logIngest.stop()];
+    if (this.otlpTransport) {
+      cleanupPromises.push(this.otlpTransport.shutdown());
+    }
+    await Promise.all(cleanupPromises);
   }
 
   private emitSessionGauges(): void {

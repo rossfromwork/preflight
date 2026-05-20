@@ -110,6 +110,8 @@ The largest package. It has several subsystems:
 
 - **Security** (`src/security/`) — Audit trail that classifies tool calls and flags sensitive file access or destructive commands.
 
+- **Tracing** (`src/tracing/`) — OTel span management. When `transport !== 'nr-events-api'`, emits a session root span, intermediate task spans from `TaskDetector` boundaries, and a leaf span per `ToolCallRecord`. The resulting waterfall is visible in any OTel-compatible backend.
+
 ---
 
 ## Key Concepts
@@ -200,6 +202,37 @@ Or use the MCP tool:
 ```
 nr_observe_subscribe_digest(webhookUrl: "https://hooks.slack.com/services/...")
 ```
+
+### OTLP Transport (Advanced)
+
+By default, telemetry flows to New Relic's proprietary Events API and Metrics API. To also export to any OpenTelemetry-compatible backend (Datadog, Grafana Cloud, Honeycomb, a self-hosted Collector, or New Relic's OTLP endpoint), configure the `transport` setting:
+
+```bash
+export OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp.nr-data.net     # NR US; or any OTel backend
+export OTEL_EXPORTER_OTLP_HEADERS="api-key=your-license-key"    # Comma-separated key=value
+export NEW_RELIC_AI_TRANSPORT=both   # 'nr-events-api' (default), 'otlp', or 'both'
+```
+
+| Transport mode | Behavior |
+|----------------|----------|
+| `nr-events-api` | NR Events API + Metric API only (default) |
+| `otlp` | OTLP/HTTP only — requires `OTEL_EXPORTER_OTLP_ENDPOINT` |
+| `both` | Both transports simultaneously (concurrent export) |
+
+New Relic OTLP endpoints: US `https://otlp.nr-data.net`, EU `https://otlp.eu01.nr-data.net`.
+
+### Inbound OTLP Receiver (Proxy Mode)
+
+When running in **proxy mode**, the observatory can also act as a local OpenTelemetry Collector for other apps running on your machine. Enable it to accept telemetry from any OTel-instrumented application, enrich it with the current session context (`ai.session.id`, `ai.developer`, `ai.project_id`), and forward it to NR. This ties traces from your AI-coded applications back to the coding session that produced them.
+
+```bash
+export NR_AI_OTLP_RECEIVER_ENABLED=true                        # Enable inbound OTLP receiver
+export NR_AI_OTLP_RECEIVER_PORT=4318                           # Default: 4318 (standard OTLP/HTTP port)
+export NR_AI_OTLP_FORWARD_ENDPOINT=https://otlp.nr-data.net   # Where to forward enriched payloads
+export NR_AI_OTLP_FORWARD_HEADERS="api-key=your-license-key"  # Auth headers (defaults to your license key)
+```
+
+Point your application's OTel SDK at `http://localhost:4318` and its spans/metrics/logs will be enriched and forwarded automatically. JSON OTLP payloads are enriched; protobuf payloads are forwarded as-is.
 
 ## Code Conventions
 

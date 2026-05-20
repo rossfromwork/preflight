@@ -46,8 +46,8 @@ export { DEFAULT_PRICING_TABLE } from './pricing-data.js';
 export type { ModelPricing, CostBreakdown } from './pricing.js';
 export { RequestTimer } from './timing.js';
 export type { RequestTimerMetrics } from './timing.js';
-export { sendEvents, sendMetrics, sendLogs } from './transport/index.js';
-export type { NrMetric, NrLogEntry, TransportOptions, TransportResult } from './transport/index.js';
+export { sendEvents, sendMetrics, sendLogs, OtlpTransport, OtlpEventBridge } from './transport/index.js';
+export type { NrMetric, NrLogEntry, TransportOptions, TransportResult, OtlpTransportOptions, OtlpEventBridgeOptions } from './transport/index.js';
 export { EventBuffer, MetricAggregator, HarvestScheduler } from './harvest/index.js';
 export type {
   EventBufferOptions,

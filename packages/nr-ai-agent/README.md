@@ -243,9 +243,37 @@ Emits `AiCostGrowthAlert` and `AiCostForecastAlert` events.
 
 Analyzes cache usage, model selection, and context pressure to generate recommendations. `AiRecommendation` events are emitted every 5 minutes when enough data has been collected (≥20 requests per feature).
 
-### OpenTelemetry Export (opt-in)
+### Automatic OTel Span Emission
 
-Export spans and metrics to any OTLP-compatible backend:
+When `otlpEndpoint` is configured, every SDK wrapper call automatically emits an OpenTelemetry span following the [GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/). No code changes are required — spans are emitted alongside the existing `AiRequest`/`AiResponse` events.
+
+```typescript
+const agent = init({
+  licenseKey: process.env.NEW_RELIC_LICENSE_KEY,
+  accountId: 12345,
+  otlpEndpoint: 'https://otlp.nr-data.net',
+  otlpHeaders: { 'api-key': process.env.NEW_RELIC_LICENSE_KEY },
+  transport: 'both',  // 'nr-events-api' | 'otlp' | 'both'
+});
+```
+
+Each LLM call produces a span named `"{operation} {model}"` (e.g. `"chat claude-opus-4-7"`) with attributes:
+
+| Attribute | Set at | Example |
+|-----------|--------|---------|
+| `gen_ai.system` | Span start | `anthropic` |
+| `gen_ai.request.model` | Span start | `claude-opus-4-7` |
+| `gen_ai.operation.name` | Span start | `chat` |
+| `gen_ai.request.max_tokens` | Span start | `1024` |
+| `gen_ai.usage.input_tokens` | Span end | `45` |
+| `gen_ai.usage.output_tokens` | Span end | `120` |
+| `gen_ai.response.finish_reason` | Span end | `end_turn` |
+
+When `transport === 'nr-events-api'` (the default), OTLP is not configured and the OTel no-op tracer is used — zero overhead, no span data exported.
+
+### OpenTelemetry Export (opt-in, manual)
+
+For manual span and metric export to any OTLP-compatible backend:
 
 ```typescript
 const otel = agent.getOTelExporter();

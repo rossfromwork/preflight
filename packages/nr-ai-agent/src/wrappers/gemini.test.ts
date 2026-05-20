@@ -1,3 +1,4 @@
+import { SpanStatusCode, type Tracer } from '@opentelemetry/api';
 import { wrapGeminiClient, extractSafetyRatings, extractGroundingInfo } from './gemini.js';
 import type {
   AiRequestRecord,
@@ -7,6 +8,7 @@ import type {
   EmbeddingRecordHandler,
 } from '../types.js';
 import type { GenerateContentResponse, GenerateContentParameters, GoogleGenAI } from '@google/genai';
+import * as tracing from '../tracing.js';
 
 interface MockGoogleGenAIClient {
   models: {
@@ -878,6 +880,60 @@ describe('wrapGeminiClient', () => {
       );
 
       expect(records[0].toolNames[0]).toBe('myfuncname');
+    });
+  });
+
+  describe('span lifecycle', () => {
+    let mockSpan: { setAttributes: jest.Mock; setStatus: jest.Mock; recordException: jest.Mock; end: jest.Mock };
+    let mockTracer: { startSpan: jest.Mock };
+
+    beforeEach(() => {
+      mockSpan = {
+        setAttributes: jest.fn(),
+        setStatus: jest.fn(),
+        recordException: jest.fn(),
+        end: jest.fn(),
+      };
+      mockTracer = { startSpan: jest.fn(() => mockSpan) };
+      jest.spyOn(tracing, 'getTracer').mockReturnValue(mockTracer as unknown as Tracer);
+    });
+
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it('starts and ends a span on success', async () => {
+      const response = makeGenerateContentResponse();
+      const client = makeMockClient();
+      client.models.generateContent.mockResolvedValue(response);
+
+      const config = makeConfig();
+      const { handler } = makeRecorder();
+      const { handler: embHandler } = makeEmbeddingRecorder();
+
+      wrapGeminiClient(client as unknown as GoogleGenAI, config, handler, embHandler);
+      await client.models.generateContent(makeGenerateParams());
+
+      expect(mockTracer.startSpan).toHaveBeenCalledTimes(1);
+      expect(mockSpan.end).toHaveBeenCalledTimes(1);
+      expect(mockSpan.setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.OK });
+    });
+
+    it('records exception and ends span on error', async () => {
+      const error = new Error('SDK error');
+      const client = makeMockClient();
+      client.models.generateContent.mockRejectedValue(error);
+
+      const config = makeConfig();
+      const { handler } = makeRecorder();
+      const { handler: embHandler } = makeEmbeddingRecorder();
+
+      wrapGeminiClient(client as unknown as GoogleGenAI, config, handler, embHandler);
+      await expect(client.models.generateContent(makeGenerateParams())).rejects.toThrow('SDK error');
+
+      expect(mockSpan.recordException).toHaveBeenCalledWith(error);
+      expect(mockSpan.setStatus).toHaveBeenCalledWith(expect.objectContaining({ code: SpanStatusCode.ERROR }));
+      expect(mockSpan.end).toHaveBeenCalledTimes(1);
     });
   });
 });

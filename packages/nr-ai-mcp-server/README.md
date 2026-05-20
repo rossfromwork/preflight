@@ -110,6 +110,17 @@ export NEW_RELIC_AI_RETAIN_SESSIONS_DAYS=30   # Auto-purge old sessions
 # Weekly digest
 export NEW_RELIC_AI_DIGEST_WEBHOOK_URL=https://hooks.slack.com/services/...
 export NEW_RELIC_AI_DIGEST_SCHEDULE="0 9 * * 1"  # Cron: Mon 9am
+
+# OTLP transport (optional — export to any OTel-compatible backend)
+export OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp.nr-data.net   # NR US; or Datadog, Grafana, etc.
+export OTEL_EXPORTER_OTLP_HEADERS="api-key=your-license-key"  # Comma-separated key=value
+export NEW_RELIC_AI_TRANSPORT=both   # 'nr-events-api' (default), 'otlp', or 'both'
+
+# OTLP receiver (proxy mode only — accept inbound telemetry from local OTel apps)
+export NR_AI_OTLP_RECEIVER_ENABLED=true                        # Enable inbound OTLP receiver (default: false)
+export NR_AI_OTLP_RECEIVER_PORT=4318                           # Port for local OTLP/HTTP receiver (default: 4318)
+export NR_AI_OTLP_FORWARD_ENDPOINT=https://otlp.nr-data.net   # Where to forward enriched payloads
+export NR_AI_OTLP_FORWARD_HEADERS="api-key=your-license-key"  # Auth headers for the forward endpoint (defaults to license key)
 ```
 
 Or via config file at `~/.nr-ai-observe/config.json`:
@@ -128,7 +139,10 @@ Or via config file at `~/.nr-ai-observe/config.json`:
   "weeklyBudgetUsd": 50.00,
   "retainSessionsDays": 30,
   "digestWebhookUrl": "https://hooks.slack.com/...",
-  "digestSchedule": "0 9 * * 1"
+  "digestSchedule": "0 9 * * 1",
+  "otlpEndpoint": "https://otlp.nr-data.net",
+  "otlpHeaders": { "api-key": "your-license-key" },
+  "transport": "both"
 }
 ```
 
@@ -189,7 +203,8 @@ Claude Code
        └─> NrMcpServer
             ├─ HookEventProcessor (polls buffer)
             │    └─> pairs pre/post → ToolCallRecord
-            │         └─> 17 metric analyzers
+            │         └─> 18 metric analyzers
+            │              └─> emitToolCallSpan() (when transport ≠ nr-events-api)
             │
             ├─ NrIngestManager
             │    ├─ Events → NR Events API (5s)

@@ -42,11 +42,13 @@ nr-ai-observatory/
         errors.ts                       # Error classification, retry logic
         events/                         # NR event creation and serialization
         harvest/                        # EventBuffer, MetricAggregator, HarvestScheduler
-        transport/                      # HTTP clients for Events, Metric, and Logs APIs
+        transport/                      # HTTP clients for Events, Metric, and Logs APIs; OtlpTransport and OtlpEventBridge for OTLP/HTTP export
 
     nr-ai-agent/                        # nr-ai-agent
       src/
         agent.ts                        # NrAiAgent class + singleton init()
+        tracing.ts                      # initTracer() / getTracer() — OTel tracer singleton for SDK wrappers
+        span-attributes.ts              # buildSpanName(), buildRequestAttributes(), buildResponseAttributes() — GenAI OTel span helpers
         wrappers/                       # 6 SDK wrappers
           anthropic.ts                  # Wraps Anthropic client (messages.create/stream)
           gemini.ts                     # Wraps Google Gemini client (generateContent)
@@ -121,6 +123,11 @@ nr-ai-observatory/
           cost-tools.ts                 # Cost analysis tools
           workflow-tools.ts             # Workflow analysis + feedback tools
           cross-session-tools.ts        # Cross-session analysis tools
+        tracing/                        # OTel span management for MCP tool call tracing
+          mcp-tracer.ts               # getMcpTracer() / initMcpTracer() — tracer singleton
+          session-span.ts             # SessionSpan — root span lifecycle (start at startup, end at shutdown)
+          tool-call-span.ts           # emitToolCallSpan() — one child span per ToolCallRecord
+          task-span-tracker.ts        # TaskSpanTracker — intermediate task span lifecycle
         transport/
           nr-ingest.ts                  # NrIngestManager (events + metrics + logs)
           log-ingest.ts                 # Log ingestion with buffering
@@ -340,6 +347,9 @@ Key config interfaces:
 | `digestWebhookUrl` | `NEW_RELIC_AI_DIGEST_WEBHOOK_URL` | string | Slack/HTTP webhook for weekly digest |
 | `digestSchedule` | `NEW_RELIC_AI_DIGEST_SCHEDULE` | string | Cron expression for digest delivery |
 | `retainSessionsDays` | `NEW_RELIC_AI_RETAIN_SESSIONS_DAYS` | number | Auto-purge sessions older than N days |
+| `otlpEndpoint` | `OTEL_EXPORTER_OTLP_ENDPOINT` | string \| null | OTLP/HTTP endpoint URL (e.g. `https://otlp.nr-data.net` for NR US). When set, enables OTLP export. |
+| `otlpHeaders` | `OTEL_EXPORTER_OTLP_HEADERS` | Record\<string, string\> | Auth headers for OTLP endpoint. Env var uses comma-separated `key=value` pairs. |
+| `transport` | `NEW_RELIC_AI_TRANSPORT` | `'nr-events-api' \| 'otlp' \| 'both'` | `nr-events-api` (default): NR APIs only. `otlp`: OTLP only. `both`: concurrent. |
 
 ### New Event Types
 

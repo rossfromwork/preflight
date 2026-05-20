@@ -29,6 +29,10 @@ import { ModelUsageTracker } from './metrics/model-usage-tracker.js';
 import { NrIngestManager } from './transport/nr-ingest.js';
 import { FeedbackCollector } from './tools/workflow-tools.js';
 import { registerTools } from './tools/session-stats.js';
+import { initMcpTracer } from './tracing/mcp-tracer.js';
+import { SessionSpan } from './tracing/session-span.js';
+import { TaskSpanTracker } from './tracing/task-span-tracker.js';
+import { emitToolCallSpan } from './tracing/tool-call-span.js';
 import type { CliOptions } from './types.js';
 
 export { VERSION };
@@ -119,6 +123,11 @@ async function main(): Promise<void> {
   let sessionStore: SessionStore | undefined;
   let weeklySummaryGenerator: WeeklySummaryGenerator | undefined;
   let persistSession: (() => void) | undefined;
+  let config: import('./config.js').McpServerConfig | undefined;
+  let sessionTracker: SessionTracker | undefined;
+  let taskDetector: TaskDetector | undefined;
+  let sessionSpan: SessionSpan | undefined;
+  let taskSpanTracker: TaskSpanTracker | undefined;
 
   let shuttingDown = false;
   const shutdown = async () => {
@@ -127,6 +136,12 @@ async function main(): Promise<void> {
     logger.info('Shutting down...');
     try {
       persistSession?.();
+      if (config?.transport !== 'nr-events-api' && sessionTracker && taskDetector && sessionSpan) {
+        taskSpanTracker?.closeAll();
+        const stats = sessionTracker.getMetrics();
+        const taskMetrics = taskDetector.getMetrics();
+        sessionSpan.end(stats.toolCallCount, taskMetrics.totalTasksCompleted);
+      }
       eventProcessor?.stop();
       if (nrIngest) await nrIngest.stop();
       if (mcpServer) await mcpServer.close();
@@ -148,9 +163,18 @@ async function main(): Promise<void> {
     mcpServer = createServer();
     await mcpServer.connectStdio();
 
-    const config = loadMcpConfig(options);
+    config = loadMcpConfig(options);
     const sessionTraceId = randomUUID();
     logger.info('Session trace ID generated', { sessionTraceId });
+
+    if (config.transport !== 'nr-events-api') {
+      initMcpTracer();
+    }
+    sessionSpan = new SessionSpan(sessionTraceId, config.developer);
+    taskSpanTracker = new TaskSpanTracker();
+    if (config.transport !== 'nr-events-api') {
+      sessionSpan.start();
+    }
 
     if (!config.enabled) {
       logger.info('Server disabled via config — exiting');
@@ -169,9 +193,9 @@ async function main(): Promise<void> {
       }
     }
 
-    const sessionTracker = new SessionTracker();
+    sessionTracker = new SessionTracker();
     const costTracker = new CostTracker(sessionTracker);
-    const taskDetector = new TaskDetector({ costTracker });
+    taskDetector = new TaskDetector({ costTracker });
     const antiPatternDetector = new AntiPatternDetector();
     const efficiencyScorer = new EfficiencyScorer();
     const feedbackCollector = new FeedbackCollector();
@@ -250,8 +274,28 @@ async function main(): Promise<void> {
     eventProcessor = new HookEventProcessor({
       store: localStore,
       onRecord: (record) => {
-        sessionTracker.recordToolCall(record);
-        taskDetector.recordToolCall(record);
+        // Capture active task ID before recordToolCall may close the current task
+        const taskIdBeforeRecord = config!.transport !== 'nr-events-api'
+          ? taskDetector!.getActiveTaskId()
+          : null;
+
+        sessionTracker!.recordToolCall(record);
+        taskDetector!.recordToolCall(record);
+
+        if (config!.transport !== 'nr-events-api') {
+          // Emit tool call span — parent is the active task span (or session span if no task)
+          const activeTaskId = taskDetector!.getActiveTaskId();
+          const parentCtx = taskIdBeforeRecord
+            ? taskSpanTracker!.getContext(taskIdBeforeRecord, sessionSpan!.getContext())
+            : sessionSpan!.getContext();
+          emitToolCallSpan(record, parentCtx, activeTaskId ?? undefined);
+
+          // Open a task span if a new task was started by this record
+          if (activeTaskId !== null && activeTaskId !== taskIdBeforeRecord) {
+            taskSpanTracker!.openTask(activeTaskId, record.toolName, sessionSpan!.getContext());
+          }
+        }
+
         contextWindowTracker.recordToolCall(record);
         latencyTracker.recordToolCall(record);
         capturedNrIngest.ingestToolCall(record);
@@ -264,7 +308,7 @@ async function main(): Promise<void> {
           costTracker.recordEstimatedTokens(
             record.inputSizeBytes ?? 0,
             record.outputSizeBytes ?? 0,
-            config.model,
+            config!.model,
           );
         }
 
@@ -279,9 +323,13 @@ async function main(): Promise<void> {
 
         // Emit any tasks that completed as a result of this record,
         // and detect anti-patterns across each completed task's tool calls
-        for (const task of taskDetector.drainNewlyCompletedTasks()) {
+        for (const task of taskDetector!.drainNewlyCompletedTasks()) {
           capturedNrIngest.ingestCodingTask(task);
           taskCompletionTracker.recordTask(task);
+          // Close the task span — this handles both signal-driven and idle-timer-driven closures
+          if (config!.transport !== 'nr-events-api') {
+            taskSpanTracker!.closeTask(task.taskId, task.toolCallCount);
+          }
           const firstRecord = task.toolCalls[0];
           const context = {
             sessionId: firstRecord?.sessionId ?? undefined,
@@ -335,12 +383,12 @@ async function main(): Promise<void> {
       if (!sessionStore) return;
       try {
         const summary = buildSessionSummary({
-          sessionTracker,
+          sessionTracker: sessionTracker!,
           costTracker,
-          taskDetector,
+          taskDetector: taskDetector!,
           antiPatternDetector,
           efficiencyScorer,
-          developer: config.developer ?? 'unknown',
+          developer: config!.developer ?? 'unknown',
         });
         sessionStore.saveSession(summary);
         weeklySummaryGenerator?.checkAndGenerateLastWeek();
@@ -375,6 +423,8 @@ async function main(): Promise<void> {
       process.exit(1);
     }
 
+    const sessionTraceId = randomUUID();
+
     proxyManager = new ProxyManager({
       port: config.port,
       onToolCall: (record) => {
@@ -390,6 +440,16 @@ async function main(): Promise<void> {
           method: record.method,
           durationMs: record.durationMs,
         });
+      },
+      otlpReceiverEnabled: config.otlpReceiverEnabled,
+      otlpReceiverPort: config.otlpReceiverPort,
+      otlpForwardEndpoint: config.otlpForwardEndpoint,
+      otlpForwardHeaders: config.otlpForwardHeaders,
+      otlpEnrichmentAttributes: {
+        'ai.session.id': sessionTraceId,
+        'ai.developer': config.developer,
+        ...(config.projectId && { 'ai.project_id': config.projectId }),
+        ...(config.teamId && { 'ai.team_id': config.teamId }),
       },
     });
 

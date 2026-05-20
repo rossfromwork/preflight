@@ -14,6 +14,16 @@
   "scripts": {
     "test": "jest --passWithNoTests"
   },
+  "dependencies": {
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/sdk-trace-node": "^2.7.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.218.0",
+    "@opentelemetry/exporter-metrics-otlp-http": "^0.218.0",
+    "@opentelemetry/sdk-metrics": "^2.7.0",
+    "@opentelemetry/resources": "^2.7.0",
+    "@opentelemetry/exporter-logs-otlp-http": "^0.218.0",
+    "@opentelemetry/sdk-logs": "^0.218.0"
+  },
   "devDependencies": {
     "typescript": "^5.7.0"
   }

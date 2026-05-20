@@ -16,6 +16,9 @@ export interface AgentConfig {
   readonly collectorHost: string | null;
   readonly accountId: string | null;
   readonly attributionDefaults: Record<string, string> | null;
+  readonly otlpEndpoint: string | null;
+  readonly otlpHeaders: Readonly<Record<string, string>>;
+  readonly transport: 'nr-events-api' | 'otlp' | 'both';
 }
 
 function envBool(key: string, defaultValue: boolean): boolean {
@@ -65,6 +68,19 @@ function buildAttributionDefaults(
   }
 
   return Object.keys(result).length > 0 ? result : null;
+}
+
+function parseOtlpHeaders(headerString: string | undefined): Record<string, string> {
+  if (!headerString) return {};
+  const result: Record<string, string> = {};
+  const pairs = headerString.split(',');
+  for (const pair of pairs) {
+    const [key, value] = pair.split('=');
+    if (key && value) {
+      result[key.trim()] = value.trim();
+    }
+  }
+  return result;
 }
 
 export function loadConfig(overrides?: Partial<AgentConfig>): Readonly<AgentConfig> {
@@ -123,6 +139,9 @@ export function loadConfig(overrides?: Partial<AgentConfig>): Readonly<AgentConf
     collectorHost: overrides?.collectorHost ?? process.env.NEW_RELIC_HOST ?? null,
     accountId,
     attributionDefaults,
+    otlpEndpoint: overrides?.otlpEndpoint ?? process.env.OTEL_EXPORTER_OTLP_ENDPOINT ?? null,
+    otlpHeaders: overrides?.otlpHeaders ?? parseOtlpHeaders(process.env.OTEL_EXPORTER_OTLP_HEADERS),
+    transport: overrides?.transport ?? 'nr-events-api',
   };
 
   return Object.freeze(config);

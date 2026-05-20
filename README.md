@@ -200,6 +200,39 @@ The easiest way to configure is through the setup wizard (`nr-ai-observe setup`)
 
 All settings can also be set via environment variables — see [packages/nr-ai-mcp-server/README.md](./packages/nr-ai-mcp-server/README.md) for the full list.
 
+### OTLP Transport (Optional)
+
+By default, the Observatory sends telemetry to New Relic's proprietary Events API and Metrics API. You can optionally export to **any OpenTelemetry-compatible backend** — Datadog, Grafana Cloud, Honeycomb, a self-hosted OpenTelemetry Collector, or New Relic's OTLP endpoint — without losing the NR path.
+
+Add these settings to `~/.nr-ai-observe/config.json`:
+
+```json
+{
+  "otlpEndpoint": "https://otlp.nr-data.net",
+  "otlpHeaders": { "api-key": "YOUR_LICENSE_KEY" },
+  "transport": "both"
+}
+```
+
+| Setting | What it does | Options |
+|---------|-------------|---------|
+| `otlpEndpoint` | OTLP/HTTP endpoint URL | **New Relic**: US: `https://otlp.nr-data.net`, EU: `https://otlp.eu01.nr-data.net`. Or use any backend's OTLP URL (Datadog, Grafana, Honeycomb, etc.) |
+| `otlpHeaders` | Extra HTTP headers for authentication | **New Relic**: `{ "api-key": "YOUR_LICENSE_KEY" }`. **Datadog**: `{ "dd-api-key": "YOUR_DATADOG_API_KEY" }`. Consult your backend's docs. |
+| `transport` | How to send telemetry | `"nr-events-api"` (default, NR only), `"otlp"` (OTLP only), `"both"` (simultaneous export to NR and OTLP) |
+
+#### Inbound OTLP Receiver (Proxy Mode)
+
+When running in proxy mode, you can also enable an **inbound OTLP receiver** that acts as a local OpenTelemetry Collector. Any OTel-instrumented app pointing at `http://localhost:4318` will have its telemetry enriched with the current coding session context and forwarded to NR, linking application traces to the AI session that produced them.
+
+```json
+{
+  "otlpReceiverEnabled": true,
+  "otlpReceiverPort": 4318,
+  "otlpForwardEndpoint": "https://otlp.nr-data.net",
+  "otlpForwardHeaders": { "api-key": "YOUR_LICENSE_KEY" }
+}
+```
+
 ---
 
 ## Weekly Digest
