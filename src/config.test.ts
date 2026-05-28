@@ -527,21 +527,118 @@ describe('redactSensitive()', () => {
   });
 
   it('redacts GitHub personal access tokens', () => {
-    const input = 'auth: ghp_abc123def456ghi789';
+    const input = 'auth: ghp_abc123def456ghi789jklmnopqr';
     const result = redactSensitive(input);
-    expect(result).not.toContain('ghp_abc123def456ghi789');
+    expect(result).not.toContain('ghp_abc123def456ghi789jklmnopqr');
   });
 
-  it('redacts Bearer tokens', () => {
+  it('redacts GitHub App installation tokens', () => {
+    const input = 'token: ghs_16c7e42f292c6912191abc123def456';
+    const result = redactSensitive(input);
+    expect(result).not.toContain('ghs_16c7e42f292c6912191abc123def456');
+  });
+
+  it('redacts Bearer tokens (JWT format)', () => {
     const input = 'Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig';
     const result = redactSensitive(input);
+    // JWT pattern should catch the dots, not the Bearer pattern with bounded chars
     expect(result).not.toContain('eyJhbGciOiJIUzI1NiJ9');
   });
 
-  it('redacts OpenAI-style API keys', () => {
-    const input = 'key: sk-proj-abc123def456';
+  it('redacts Bearer tokens (alphanumeric format)', () => {
+    const input = 'Authorization: Bearer abc123def456ghi789jklmnopqrstuvwxyz01';
     const result = redactSensitive(input);
-    expect(result).not.toContain('sk-proj-abc123def456');
+    expect(result).not.toContain('abc123def456ghi789jklmnopqrstuvwxyz01');
+  });
+
+  it('redacts OpenAI-style API keys', () => {
+    const input = 'key: sk-proj-abc123def456789012345678';
+    const result = redactSensitive(input);
+    expect(result).not.toContain('sk-proj-abc123def456789012345678');
+  });
+
+  it('redacts Stripe live keys', () => {
+    const input = 'stripe_key: sk_live_51H7mVA1234567890abcdefghijklmn';
+    const result = redactSensitive(input);
+    expect(result).not.toContain('sk_live_51H7mVA1234567890abcdefghijklmn');
+  });
+
+  it('redacts Stripe test keys', () => {
+    const input = 'stripe_key: sk_test_51H7mVA1234567890abcdefghijklmn';
+    const result = redactSensitive(input);
+    expect(result).not.toContain('sk_test_51H7mVA1234567890abcdefghijklmn');
+  });
+
+  it('redacts Stripe restricted keys', () => {
+    const input = 'stripe_key: rk_live_51H7mVA1234567890abcdefghijklmn';
+    const result = redactSensitive(input);
+    expect(result).not.toContain('rk_live_51H7mVA1234567890abcdefghijklmn');
+  });
+
+  it('redacts PyPI tokens', () => {
+    const input = 'pypi_token: pypi-AgEIcHlwLm9yZzoxMjM0NTY3ODkwYWJjZGVmZ2hpams';
+    const result = redactSensitive(input);
+    expect(result).not.toContain('pypi-AgEIcHlwLm9yZzoxMjM0NTY3ODkwYWJjZGVmZ2hpams');
+  });
+
+  it('redacts Hugging Face tokens', () => {
+    const input = 'hf_token: hf_abcdefghijklmnopqrstuvwxyz01234567';
+    const result = redactSensitive(input);
+    expect(result).not.toContain('hf_abcdefghijklmnopqrstuvwxyz01234567');
+  });
+
+  it('redacts PostgreSQL connection strings with credentials', () => {
+    const input = 'db: postgres://admin:secretpassword@db.example.com/mydb';
+    const result = redactSensitive(input);
+    expect(result).not.toContain('admin:secretpassword');
+  });
+
+  it('redacts MongoDB connection strings with credentials', () => {
+    const input = 'db: mongodb://user:password@cluster.mongodb.net/db';
+    const result = redactSensitive(input);
+    expect(result).not.toContain('user:password');
+  });
+
+  it('redacts MongoDB+srv connection strings with credentials', () => {
+    const input = 'db: mongodb+srv://admin:mypassword123@cluster.mongodb.net/db';
+    const result = redactSensitive(input);
+    expect(result).not.toContain('admin:mypassword123');
+  });
+
+  it('redacts MySQL connection strings with credentials', () => {
+    const input = 'db: mysql://root:rootpass@localhost/db';
+    const result = redactSensitive(input);
+    expect(result).not.toContain('root:rootpass');
+  });
+
+  it('redacts Redis connection strings with credentials', () => {
+    const input = 'db: redis://admin:redispass@redis.example.com';
+    const result = redactSensitive(input);
+    expect(result).not.toContain('admin:redispass');
+  });
+
+  it('redacts HTTP basic-auth credentials in URLs', () => {
+    const input = 'url: http://user:password@api.example.com/endpoint';
+    const result = redactSensitive(input);
+    expect(result).not.toContain('user:password');
+  });
+
+  it('redacts HTTPS basic-auth credentials in URLs', () => {
+    const input = 'url: https://admin:secretpass@secure.example.com/api';
+    const result = redactSensitive(input);
+    expect(result).not.toContain('admin:secretpass');
+  });
+
+  it('redacts Twilio Account SID', () => {
+    const input = 'twilio_sid: ACa1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6';
+    const result = redactSensitive(input);
+    expect(result).not.toContain('ACa1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6');
+  });
+
+  it('redacts Twilio API key', () => {
+    const input = 'twilio_key: SK1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d';
+    const result = redactSensitive(input);
+    expect(result).not.toContain('SK1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d');
   });
 
   it('redacts PEM private keys', () => {
@@ -549,6 +646,77 @@ describe('redactSensitive()', () => {
     const result = redactSensitive(input);
     expect(result).not.toContain('MIIE');
     expect(result).toContain('[REDACTED]');
+  });
+
+  it('does not over-redact special characters after tokens', () => {
+    const input = 'github_auth: ghp_abc123defghijklmnopqrstuvwxyz1234@example.com';
+    const result = redactSensitive(input);
+    // Token part is redacted, but @example.com should be preserved
+    expect(result).toContain('@example.com');
+    expect(result).toContain('[REDACTED]');
+  });
+
+  it('stops redaction at non-matching characters', () => {
+    const input = 'credential: sk-proj-abc123defghijklmnopqrstuvwxyz123/path/to/file';
+    const result = redactSensitive(input);
+    // Token is redacted, but /path/to/file should remain
+    expect(result).toContain('/path/to/file');
+  });
+
+  it('does not consume unbounded characters beyond 200', () => {
+    const input = 'github_key: ghp_' + 'a'.repeat(250);
+    const result = redactSensitive(input);
+    // Only up to 200 characters after ghp_ should be redacted
+    // The test verifies that we don't consume everything with unbounded \S+
+    expect(result).toContain('[REDACTED]');
+    const afterRedaction = result.split('[REDACTED]')[1];
+    expect(afterRedaction.length).toBeGreaterThan(0);
+    expect(afterRedaction).toContain('aaa');
+  });
+
+  it('redacts Azure SAS token with sv parameter', () => {
+    const input = 'url: https://storage.blob.core.windows.net/container/blob?sv=2021-06-08&ss=bfqt&srt=sco&sig=abcdef123456';
+    const result = redactSensitive(input);
+    expect(result).not.toContain('sv=2021-06-08');
+    expect(result).not.toContain('sig=abcdef123456');
+  });
+
+  it('redacts Azure SAS token with se parameter', () => {
+    const input = 'url: https://storage.blob.core.windows.net?se=2021-12-31T23:59:59Z&sig=token123456789';
+    const result = redactSensitive(input);
+    expect(result).not.toContain('se=2021-12-31T23:59:59Z');
+    expect(result).not.toContain('sig=token123456789');
+  });
+
+  it('redacts Azure SAS token with sp parameter', () => {
+    const input = 'url: https://storage.blob.core.windows.net/blob?sp=racwd&sig=secrettoken123456789';
+    const result = redactSensitive(input);
+    expect(result).not.toContain('sp=racwd');
+    expect(result).not.toContain('sig=secrettoken123456789');
+  });
+
+  it('redacts Vercel tokens', () => {
+    const input = 'vercel_token: vercel_abc123def456ghi789jklmnopqrstuvwxyz012345';
+    const result = redactSensitive(input);
+    expect(result).not.toContain('vercel_abc123def456ghi789jklmnopqrstuvwxyz012345');
+  });
+
+  it('redacts Heroku tokens', () => {
+    const input = 'heroku_key: heroku_abc123def456ghi789jklmnopqrstuvwxyz012345';
+    const result = redactSensitive(input);
+    expect(result).not.toContain('heroku_abc123def456ghi789jklmnopqrstuvwxyz012345');
+  });
+
+  it('redacts Datadog tokens', () => {
+    const input = 'dd_token: dd_abc123def456ghi789jklmnopqrstuvwxyz01234567';
+    const result = redactSensitive(input);
+    expect(result).not.toContain('dd_abc123def456ghi789jklmnopqrstuvwxyz01234567');
+  });
+
+  it('redacts PagerDuty tokens', () => {
+    const input = 'pagerduty_key: pk_abc123def456ghi789jklmnopqrstuvwxyz01234567';
+    const result = redactSensitive(input);
+    expect(result).not.toContain('pk_abc123def456ghi789jklmnopqrstuvwxyz01234567');
   });
 
   it('accepts custom patterns', () => {

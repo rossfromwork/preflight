@@ -67,13 +67,21 @@ const DEFAULT_STORAGE_PATH = resolve(homedir(), '.nr-ai-observe');
 
 const DEFAULT_REDACTION_PATTERNS: RegExp[] = [
   /\b(?:API_KEY|SECRET|TOKEN|PASSWORD|PASSPHRASE|PRIVATE_KEY)\b[\s]*[=:]\s*\S+/gi,
-  /(?:sk-|ghp_|gho_|github_pat_|xoxb-|xoxp-|Bearer\s+)\S+/g,
+  /(?:sk-|ghp_|gho_|ghs_|github_pat_|xoxb-|xoxp-|Bearer\s+)[A-Za-z0-9_-]{20,200}/g,
   /-----BEGIN[\s\S]{0,65536}?-----END[^\n]{0,256}-----/g,
   /\bAKIA[0-9A-Z]{16}\b/g,
   /\bAIzaSy[0-9A-Za-z_-]{33}\b/g,
   /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g,
   /\bnpm_[A-Za-z0-9]{36}\b/g,
   /\bxox[a-z]-[0-9A-Za-z-]+/g,
+  /\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{24,}\b/g,
+  /\bpypi-[A-Za-z0-9_-]{20,}\b/g,
+  /\bhf_[A-Za-z0-9]{30,}\b/g,
+  /(?:mongodb(?:\+srv)?|postgres(?:ql)?|mysql|redis):\/\/[^:\/\s]+:[^\@\/\s]+@[^\s\/]+/gi,
+  /https?:\/\/[^\s:\/]+:[^\s@\/]+@[^\s\/]+/gi,
+  /\b(?:AC|SK)[a-f0-9]{32}\b/g,
+  /(?:[?&])(?:sig|se|sp|srt|ss|sv|st)=[A-Za-z0-9%_-]+/gi,
+  /\b(?:vercel_|heroku_|dd_|pk_)[A-Za-z0-9_-]{20,}\b/gi,
 ];
 
 const ConfigFileSchema = z.object({

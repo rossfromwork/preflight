@@ -1,7 +1,8 @@
 import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { request as nodeRequest } from 'node:http';
 import type { Server } from 'node:http';
-import type { AddressInfo } from 'node:net';
+import { createConnection, type AddressInfo } from 'node:net';
+import { gzipSync, deflateSync, brotliCompressSync } from 'node:zlib';
 import { OtlpReceiver } from './otlp-receiver.js';
 import type { OtlpReceiverOptions } from './otlp-receiver.js';
 
@@ -221,6 +222,31 @@ describe('forward', () => {
       await receiver.stop();
     }
   });
+
+  it('does NOT propagate client headers to upstream (security: prevent header injection)', async () => {
+    const receiver = makeReceiver({
+      forwardEndpoint: 'https://otlp.nr-data.net',
+      forwardHeaders: { 'api-key': 'test-key' },
+    });
+    await receiver.start();
+    try {
+      const port = getBoundPort(receiver);
+      await httpRequest(port, 'POST', '/v1/traces', JSON.stringify({ resourceSpans: [] }), {
+        'x-custom-header': 'should-not-leak',
+        'authorization': 'Bearer attacker-token',
+      });
+      const call = mockFetch.mock.calls[0];
+      expect(call).toBeDefined();
+      const headers = (call?.[1] as RequestInit)?.headers as Record<string, string>;
+      expect(headers).not.toHaveProperty('x-custom-header');
+      expect(headers).not.toHaveProperty('authorization');
+      // Verify only forwardHeaders and Content-Type are present
+      expect(headers).toHaveProperty('api-key', 'test-key');
+      expect(headers).toHaveProperty('Content-Type', 'application/json');
+    } finally {
+      await receiver.stop();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -290,5 +316,378 @@ describe('constructor SSRF guard', () => {
         enrichmentAttributes: {},
       }),
     ).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F-095: Body size limit (413)
+// ---------------------------------------------------------------------------
+
+describe('body size limit (F-095)', () => {
+  let receiver: OtlpReceiver;
+
+  beforeEach(async () => {
+    receiver = makeReceiver({ maxBodyBytes: 50 });
+    await receiver.start();
+  });
+
+  afterEach(async () => {
+    await receiver.stop();
+  });
+
+  it('returns 413 when body exceeds maxBodyBytes', async () => {
+    const port = getBoundPort(receiver);
+    const largeBody = JSON.stringify({ data: 'x'.repeat(100) });
+    const { statusCode } = await httpRequest(port, 'POST', '/v1/traces', largeBody);
+    expect(statusCode).toBe(413);
+  });
+
+  it('returns 200 for body within maxBodyBytes', async () => {
+    const port = getBoundPort(receiver);
+    const { statusCode } = await httpRequest(port, 'POST', '/v1/traces', '{}');
+    expect(statusCode).toBe(200);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F-097: Slow-loris timeout (408)
+// ---------------------------------------------------------------------------
+
+describe('slow-loris timeout (F-097)', () => {
+  it('returns 408 when body delivery stalls past bodyTimeoutMs', async () => {
+    const receiver = makeReceiver({ bodyTimeoutMs: 200 });
+    await receiver.start();
+    try {
+      const port = getBoundPort(receiver);
+      const statusCode = await new Promise<number>((resolve) => {
+        const req = nodeRequest(
+          {
+            hostname: '127.0.0.1',
+            port,
+            method: 'POST',
+            path: '/v1/traces',
+            headers: { 'content-type': 'application/json', 'content-length': '1000' },
+          },
+          (res) => {
+            resolve(res.statusCode ?? 0);
+            res.resume();
+          },
+        );
+        req.on('error', () => resolve(408)); // socket may be destroyed before response arrives
+        req.flushHeaders(); // Send headers; deliberately never send the body
+      });
+      expect(statusCode).toBe(408);
+    } finally {
+      await receiver.stop();
+    }
+  }, 5000);
+});
+
+// ---------------------------------------------------------------------------
+// F-098: Content-Encoding decompression
+// ---------------------------------------------------------------------------
+
+describe('Content-Encoding decompression (F-098)', () => {
+  let receiver: OtlpReceiver;
+
+  beforeEach(async () => {
+    receiver = makeReceiver();
+    await receiver.start();
+  });
+
+  afterEach(async () => {
+    await receiver.stop();
+  });
+
+  it('decompresses gzip-encoded body and returns 200', async () => {
+    const port = getBoundPort(receiver);
+    const payload = JSON.stringify({ resourceSpans: [] });
+    const compressed = gzipSync(Buffer.from(payload));
+    const { statusCode } = await httpRequest(port, 'POST', '/v1/traces', compressed, {
+      'content-type': 'application/json',
+      'content-encoding': 'gzip',
+    });
+    expect(statusCode).toBe(200);
+  });
+
+  it('decompresses deflate-encoded body and returns 200', async () => {
+    const port = getBoundPort(receiver);
+    const payload = JSON.stringify({ resourceSpans: [] });
+    const compressed = deflateSync(Buffer.from(payload));
+    const { statusCode } = await httpRequest(port, 'POST', '/v1/traces', compressed, {
+      'content-type': 'application/json',
+      'content-encoding': 'deflate',
+    });
+    expect(statusCode).toBe(200);
+  });
+
+  it('decompresses brotli-encoded body and returns 200', async () => {
+    const port = getBoundPort(receiver);
+    const payload = JSON.stringify({ resourceSpans: [] });
+    const compressed = brotliCompressSync(Buffer.from(payload));
+    const { statusCode } = await httpRequest(port, 'POST', '/v1/traces', compressed, {
+      'content-type': 'application/json',
+      'content-encoding': 'br',
+    });
+    expect(statusCode).toBe(200);
+  });
+
+  it('returns 415 for unsupported Content-Encoding', async () => {
+    const port = getBoundPort(receiver);
+    const { statusCode } = await httpRequest(port, 'POST', '/v1/traces', '{}', {
+      'content-type': 'application/json',
+      'content-encoding': 'zstd',
+    });
+    expect(statusCode).toBe(415);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F-099: Rate limiting (429)
+// ---------------------------------------------------------------------------
+
+describe('rate limiting (F-099)', () => {
+  it('returns 429 after exceeding rateLimitPerMinute requests', async () => {
+    const receiver = makeReceiver({ rateLimitPerMinute: 2 });
+    await receiver.start();
+    try {
+      const port = getBoundPort(receiver);
+      const r1 = await httpRequest(port, 'POST', '/v1/traces', '{}');
+      const r2 = await httpRequest(port, 'POST', '/v1/traces', '{}');
+      const r3 = await httpRequest(port, 'POST', '/v1/traces', '{}');
+      expect(r1.statusCode).toBe(200);
+      expect(r2.statusCode).toBe(200);
+      expect(r3.statusCode).toBe(429);
+    } finally {
+      await receiver.stop();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F-100: API key authentication (401)
+// ---------------------------------------------------------------------------
+
+describe('API key authentication (F-100)', () => {
+  let receiver: OtlpReceiver;
+
+  beforeEach(async () => {
+    receiver = makeReceiver({ apiKey: 'test-secret' });
+    await receiver.start();
+  });
+
+  afterEach(async () => {
+    await receiver.stop();
+  });
+
+  it('returns 401 when Authorization header is absent', async () => {
+    const port = getBoundPort(receiver);
+    const { statusCode } = await httpRequest(port, 'POST', '/v1/traces', '{}');
+    expect(statusCode).toBe(401);
+  });
+
+  it('returns 401 when Bearer token is wrong', async () => {
+    const port = getBoundPort(receiver);
+    const { statusCode } = await httpRequest(port, 'POST', '/v1/traces', '{}', {
+      authorization: 'Bearer wrong-token',
+    });
+    expect(statusCode).toBe(401);
+  });
+
+  it('returns 200 with correct Bearer token', async () => {
+    const port = getBoundPort(receiver);
+    const { statusCode } = await httpRequest(port, 'POST', '/v1/traces', '{}', {
+      authorization: 'Bearer test-secret',
+    });
+    expect(statusCode).toBe(200);
+  });
+
+  it('allows unauthenticated requests when no apiKey is configured', async () => {
+    const openReceiver = makeReceiver();
+    await openReceiver.start();
+    try {
+      const port = getBoundPort(openReceiver);
+      const { statusCode } = await httpRequest(port, 'POST', '/v1/traces', '{}');
+      expect(statusCode).toBe(200);
+    } finally {
+      await openReceiver.stop();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F-101: Content-Type validation (415)
+// ---------------------------------------------------------------------------
+
+describe('Content-Type validation (F-101)', () => {
+  let receiver: OtlpReceiver;
+
+  beforeEach(async () => {
+    receiver = makeReceiver();
+    await receiver.start();
+  });
+
+  afterEach(async () => {
+    await receiver.stop();
+  });
+
+  it('returns 415 for text/plain Content-Type', async () => {
+    const port = getBoundPort(receiver);
+    const { statusCode } = await httpRequest(port, 'POST', '/v1/traces', '{}', {
+      'content-type': 'text/plain',
+    });
+    expect(statusCode).toBe(415);
+  });
+
+  it('returns 200 for application/json', async () => {
+    const port = getBoundPort(receiver);
+    const { statusCode } = await httpRequest(port, 'POST', '/v1/traces', '{}', {
+      'content-type': 'application/json',
+    });
+    expect(statusCode).toBe(200);
+  });
+
+  it('returns 200 for application/x-protobuf', async () => {
+    const port = getBoundPort(receiver);
+    const { statusCode } = await httpRequest(
+      port, 'POST', '/v1/traces', Buffer.from([0x00, 0x01]),
+      { 'content-type': 'application/x-protobuf' },
+    );
+    expect(statusCode).toBe(200);
+  });
+
+  it('returns 200 for application/json with charset parameter', async () => {
+    const port = getBoundPort(receiver);
+    const { statusCode } = await httpRequest(port, 'POST', '/v1/traces', '{}', {
+      'content-type': 'application/json; charset=utf-8',
+    });
+    expect(statusCode).toBe(200);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F-102: Incomplete body (400)
+// ---------------------------------------------------------------------------
+
+describe('incomplete body (F-102)', () => {
+  it('returns 400 when received bytes are less than Content-Length', async () => {
+    const receiver = makeReceiver();
+    await receiver.start();
+    try {
+      const port = getBoundPort(receiver);
+      const statusCode = await new Promise<number>((resolve, reject) => {
+        const conn = createConnection({ host: '127.0.0.1', port }, () => {
+          // Claim 100 bytes in Content-Length but only send 2 bytes then close
+          const raw = [
+            'POST /v1/traces HTTP/1.1',
+            'Host: 127.0.0.1',
+            'Content-Type: application/json',
+            'Content-Length: 100',
+            'Connection: close',
+            '',
+            '{}',
+          ].join('\r\n');
+          conn.write(raw);
+          conn.end();
+        });
+        let response = '';
+        conn.on('data', (chunk: Buffer) => { response += chunk.toString(); });
+        conn.on('end', () => {
+          const match = /^HTTP\/1\.1 (\d{3})/.exec(response);
+          resolve(match ? parseInt(match[1], 10) : 0);
+        });
+        conn.on('error', reject);
+      });
+      expect(statusCode).toBe(400);
+    } finally {
+      await receiver.stop();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F-103: Error message sanitization
+// ---------------------------------------------------------------------------
+
+describe('error message sanitization (F-103)', () => {
+  afterEach(() => {
+    (globalThis as { fetch?: unknown }).fetch = undefined;
+  });
+
+  it('logs only err.message without stack frames on forward error', async () => {
+    const errorMessage = 'Upstream OTLP connection refused';
+    const upstreamError = new Error(errorMessage);
+    const stackFrames = (upstreamError.stack ?? '')
+      .split('\n')
+      .filter(l => l.trim().startsWith('at '));
+
+    (globalThis as { fetch?: unknown }).fetch = () => Promise.reject(upstreamError);
+
+    const receiver = makeReceiver({
+      forwardEndpoint: 'https://otlp.nr-data.net',
+      forwardHeaders: {},
+    });
+    await receiver.start();
+    try {
+      const port = getBoundPort(receiver);
+      const { statusCode } = await httpRequest(
+        port, 'POST', '/v1/traces', JSON.stringify({ resourceSpans: [] }),
+      );
+      expect(statusCode).toBe(500);
+
+      const logged = (stderrSpy.mock.calls as Array<[string | Uint8Array]>)
+        .map(([arg]) => typeof arg === 'string' ? arg : Buffer.from(arg).toString())
+        .join('');
+
+      expect(logged).toContain(errorMessage);
+      for (const frame of stackFrames) {
+        expect(logged).not.toContain(frame.trim());
+      }
+    } finally {
+      await receiver.stop();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F-104: Expect: 100-continue
+// ---------------------------------------------------------------------------
+
+describe('Expect: 100-continue (F-104)', () => {
+  it('sends 100 Continue and completes the request successfully', async () => {
+    const receiver = makeReceiver();
+    await receiver.start();
+    try {
+      const port = getBoundPort(receiver);
+      const body = JSON.stringify({ resourceSpans: [] });
+      const statusCode = await new Promise<number>((resolve, reject) => {
+        const req = nodeRequest(
+          {
+            hostname: '127.0.0.1',
+            port,
+            method: 'POST',
+            path: '/v1/traces',
+            headers: {
+              'content-type': 'application/json',
+              'content-length': String(Buffer.byteLength(body)),
+              'expect': '100-continue',
+            },
+          },
+          (res) => {
+            resolve(res.statusCode ?? 0);
+            res.resume();
+          },
+        );
+        req.on('continue', () => {
+          req.write(body);
+          req.end();
+        });
+        req.on('error', reject);
+        req.flushHeaders();
+      });
+      expect(statusCode).toBe(200);
+    } finally {
+      await receiver.stop();
+    }
   });
 });

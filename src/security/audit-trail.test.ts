@@ -488,30 +488,30 @@ describe('NR event field redaction (N-11)', () => {
   it('auditRecordToNrEvent redacts secrets in command', () => {
     const mgr = makeManager();
     const audit = mgr.recordToolCall(
-      makeRecord({ toolName: 'Bash', command: 'curl -H "Authorization: Bearer ghp_abc123xyz" https://api.example.com' }),
+      makeRecord({ toolName: 'Bash', command: 'curl -H "Authorization: Bearer ghp_abc123xyz123abc456def789abc12" https://api.example.com' }),
     );
     const event = auditRecordToNrEvent(audit);
-    expect(event.command).not.toContain('ghp_abc123xyz');
+    expect(event.command).not.toContain('ghp_abc123xyz123abc456def789abc12');
     expect(event.command).toContain('[REDACTED]');
   });
 
   it('securityAlertToNrEvent redacts secrets in file_path', () => {
     const mgr = makeManager();
     const audit = mgr.recordToolCall(
-      makeRecord({ toolName: 'Read', filePath: '/secrets/.env.TOKEN=ghp_xyz987' }),
+      makeRecord({ toolName: 'Read', filePath: '/secrets/.env.TOKEN=ghp_xyz987abc123def456ghi789jkl012' }),
     );
     const event = securityAlertToNrEvent(audit);
-    expect(event.file_path).not.toContain('ghp_xyz987');
+    expect(event.file_path).not.toContain('ghp_xyz987abc123def456ghi789jkl012');
     expect(event.file_path).toContain('[REDACTED]');
   });
 
   it('securityAlertToNrEvent redacts secrets in command', () => {
     const mgr = makeManager();
     const audit = mgr.recordToolCall(
-      makeRecord({ toolName: 'Bash', command: 'rm -rf / && TOKEN=sk-secret999 deploy.sh' }),
+      makeRecord({ toolName: 'Bash', command: 'rm -rf / && TOKEN=sk_live_abc123xyz123abc456def789abc1 deploy.sh' }),
     );
     const event = securityAlertToNrEvent(audit);
-    expect(event.command).not.toContain('sk-secret999');
+    expect(event.command).not.toContain('sk_live_abc123xyz123abc456def789abc1');
     expect(event.command).toContain('[REDACTED]');
   });
 });

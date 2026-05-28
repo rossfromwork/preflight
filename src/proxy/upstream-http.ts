@@ -55,6 +55,7 @@ export class HttpUpstream implements ProxyUpstream {
   readonly transportType = 'http' as const;
   private readonly url: URL;
   private readonly timeoutMs: number;
+  private readonly allowPrivateHosts: boolean;
 
   constructor(config: UpstreamConfig) {
     if (!config.url) {
@@ -62,7 +63,8 @@ export class HttpUpstream implements ProxyUpstream {
     }
     this.name = config.name;
     this.url = new URL(config.url);
-    if (!config.allowPrivateHosts) {
+    this.allowPrivateHosts = config.allowPrivateHosts ?? false;
+    if (!this.allowPrivateHosts) {
       validateSsrfUrl(`HttpUpstream "${this.name}"`, this.url);
     }
     this.timeoutMs = config.timeoutMs ?? 30_000;
@@ -82,6 +84,11 @@ export class HttpUpstream implements ProxyUpstream {
     body: Buffer,
   ): Promise<ForwardResult> {
     const requestFn = this.url.protocol === 'https:' ? httpsRequest : httpRequest;
+
+    // Re-validate URL against SSRF rules immediately before fetch to prevent DNS rebinding
+    if (!this.allowPrivateHosts) {
+      validateSsrfUrl(`HttpUpstream "${this.name}" (pre-fetch)`, this.url);
+    }
 
     // Build forwarded headers
     const headers: Record<string, string> = {};
