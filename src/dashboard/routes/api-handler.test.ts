@@ -301,10 +301,29 @@ describe('api-handler GET /api/anti-patterns', () => {
 });
 
 describe('api-handler GET /api/audit', () => {
-  it('returns audit log as JSON array', async () => {
+  it('returns audit log mapped to SPA AuditEntry shape', async () => {
+    const ts1 = Date.now() - 5000;
+    const ts2 = Date.now() - 1000;
     const fakeAuditLog = [
-      { timestamp: Date.now() - 5000, action: 'read_sensitive_file', details: 'Accessed /etc/passwd' },
-      { timestamp: Date.now() - 1000, action: 'destructive_command', details: 'Ran rm -rf' },
+      {
+        timestamp: ts1,
+        sessionId: 'session-a',
+        action: 'FileRead',
+        tool: 'Read',
+        detail: 'Read /etc/passwd',
+        developer: 'alice',
+        securityAlert: { severity: 'high', alertType: 'sensitive_file' },
+      },
+      {
+        timestamp: ts2,
+        sessionId: 'session-a',
+        action: 'BashCommand',
+        tool: 'Bash',
+        detail: 'rm -rf /tmp/foo',
+        developer: 'alice',
+        command: 'rm -rf /tmp/foo',
+        securityAlert: { severity: 'critical', alertType: 'destructive_command' },
+      },
     ];
     const handler = createApiHandler({
       auditTrailManager: { getAuditLog: () => fakeAuditLog } as unknown as Parameters<typeof createApiHandler>[0]['auditTrailManager'],
@@ -314,7 +333,45 @@ describe('api-handler GET /api/audit', () => {
     await handler(req, res);
     expect(status()).toBe(200);
     expect(headers()['content-type']).toMatch(/application\/json/);
-    expect(JSON.parse(body())).toEqual(fakeAuditLog);
+    expect(JSON.parse(body())).toEqual([
+      {
+        ts: ts1,
+        sessionId: 'session-a',
+        tool: 'Read',
+        target: 'Read /etc/passwd',
+        classification: 'sensitive_file',
+      },
+      {
+        ts: ts2,
+        sessionId: 'session-a',
+        tool: 'Bash',
+        target: 'rm -rf /tmp/foo',
+        classification: 'destructive_command',
+      },
+    ]);
+  });
+
+  it("classifies entries without a securityAlert as 'other'", async () => {
+    const fakeAuditLog = [
+      {
+        timestamp: 1700000000000,
+        sessionId: null,
+        action: 'FileRead',
+        tool: 'Read',
+        detail: '/some/normal/file.ts',
+        developer: 'alice',
+      },
+    ];
+    const handler = createApiHandler({
+      auditTrailManager: { getAuditLog: () => fakeAuditLog } as unknown as Parameters<typeof createApiHandler>[0]['auditTrailManager'],
+    });
+    const req = { method: 'GET', url: '/api/audit' } as IncomingMessage;
+    const { res, status, body } = fakeRes();
+    await handler(req, res);
+    expect(status()).toBe(200);
+    const parsed = JSON.parse(body()) as Array<Record<string, unknown>>;
+    expect(parsed[0]!.classification).toBe('other');
+    expect(parsed[0]!.target).toBe('/some/normal/file.ts');
   });
 
   it('returns 503 when auditTrailManager is missing', async () => {
@@ -325,19 +382,20 @@ describe('api-handler GET /api/audit', () => {
     expect(status()).toBe(503);
   });
 
-  it('redacts secret-bearing strings in detail/command before serializing', async () => {
+  it('redacts secret-bearing strings in target (formerly detail) before serializing', async () => {
     // Use a Bearer token that matches DEFAULT_REDACTION_PATTERNS (>=20 chars after prefix).
     const secret = 'Bearer abcdefghijklmnopqrstuvwxyz0123456789';
     const fakeAuditLog = [
       {
         timestamp: 1700000000000,
         sessionId: 'session-a',
-        action: 'destructive_command',
+        action: 'BashCommand',
         tool: 'Bash',
         detail: `Bash: curl -H "Authorization: ${secret}" https://api.example.com`,
         developer: 'alice',
         command: `curl -H "Authorization: ${secret}" https://api.example.com`,
         filePath: '/home/alice/.aws/credentials',
+        securityAlert: { severity: 'medium', alertType: 'external_network' },
       },
     ];
     const handler = createApiHandler({
@@ -348,13 +406,14 @@ describe('api-handler GET /api/audit', () => {
     await handler(req, res);
     expect(status()).toBe(200);
     const parsed = JSON.parse(body()) as Array<Record<string, string>>;
-    expect(parsed[0]!.detail).not.toContain(secret);
-    expect(parsed[0]!.detail).toContain('[REDACTED]');
-    expect(parsed[0]!.command).not.toContain(secret);
-    expect(parsed[0]!.command).toContain('[REDACTED]');
-    // Timestamp/action/tool/developer pass through untouched.
-    expect(parsed[0]!.action).toBe('destructive_command');
-    expect(parsed[0]!.developer).toBe('alice');
+    expect(parsed[0]!.target).not.toContain(secret);
+    expect(parsed[0]!.target).toContain('[REDACTED]');
+    expect(parsed[0]!.classification).toBe('external_network');
+    // command/filePath/developer/action are NOT in the SPA DTO.
+    expect(parsed[0]).not.toHaveProperty('command');
+    expect(parsed[0]).not.toHaveProperty('filePath');
+    expect(parsed[0]).not.toHaveProperty('developer');
+    expect(parsed[0]).not.toHaveProperty('action');
   });
 });
 

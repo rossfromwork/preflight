@@ -1,10 +1,29 @@
 import { jest } from '@jest/globals';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, rmSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 
-// In-process tracker mocks (used by the SessionTracker portion of the proof).
+// ---------------------------------------------------------------------------
+// In-process privacy proof — narrow / config-level only
+// ---------------------------------------------------------------------------
+//
+// NOTE: The in-process test below covers the static gating (config returns
+// `mode: 'local'`) and the SessionTracker's outbound-call surface. It does
+// NOT exercise main()'s actual `if (config.mode !== 'local')` branch, because
+// invoking main() in-process requires mocking ~6 modules (MCP SDK stdio,
+// DashboardServer, server.js, hook event-processor, storage, alerts engine)
+// and ESM module mocking via `jest.unstable_mockModule` is fragile under the
+// project's ts-jest + moduleNameMapper setup. The deeper end-to-end privacy
+// proof is the second describe block, which spawns the real built binary —
+// that is the load-bearing test for the privacy promise.
+//
+// TODO(F-003 follow-up): if the in-process gating coverage becomes important,
+// either (a) refactor main() to extract the gate into a directly-testable
+// function, or (b) invest in a robust ESM-mock setup. For now the
+// child-process test is the privacy proof of record, and the `beforeAll`
+// build-on-demand below ensures it always runs.
+
 const ingestCtor = jest.fn();
 jest.unstable_mockModule('./transport/nr-ingest.js', () => ({
   NrIngestManager: class {
@@ -41,7 +60,7 @@ jest.unstable_mockModule('node:http', async () => {
   };
 });
 
-describe('privacy proof — mode=local', () => {
+describe('privacy proof — config + tracker (mode=local)', () => {
   beforeEach(() => {
     ingestCtor.mockClear();
     httpRequest.mockClear();
@@ -54,23 +73,13 @@ describe('privacy proof — mode=local', () => {
     delete process.env.NR_AI_MODE;
   });
 
-  it('does not construct NrIngestManager when mode=local', async () => {
+  it("loadMcpConfig returns mode='local' without licenseKey", async () => {
     const { loadMcpConfig } = await import('./config.js');
     const config = loadMcpConfig({ port: 9847, config: null, logLevel: 'info', stdio: true });
     expect(config.mode).toBe('local');
-
-    if (config.mode !== 'local') {
-      const { NrIngestManager } = await import('./transport/nr-ingest.js');
-      void new NrIngestManager({} as unknown as ConstructorParameters<typeof NrIngestManager>[0]);
-    }
-    expect(ingestCtor).not.toHaveBeenCalled();
   });
 
-  it('makes zero outbound HTTP/HTTPS requests during a fake session', async () => {
-    const { loadMcpConfig } = await import('./config.js');
-    const config = loadMcpConfig({ port: 9847, config: null, logLevel: 'info', stdio: true });
-    expect(config.mode).toBe('local');
-
+  it('SessionTracker.recordToolCall makes no outbound HTTP/HTTPS requests', async () => {
     const { SessionTracker } = await import('./metrics/session-tracker.js');
     const tracker = new SessionTracker();
     tracker.recordToolCall({
@@ -82,26 +91,34 @@ describe('privacy proof — mode=local', () => {
       durationMs: 10,
       success: true,
     });
-
     expect(httpRequest).not.toHaveBeenCalled();
   });
 });
 
-// Real end-to-end proof: spawn the built binary in mode=local and verify that
-// main() boots, runs, and shuts down cleanly without crashing on the missing
-// licenseKey path. This catches regressions where main() forgets to guard
-// NrIngestManager construction on mode (the in-process mocks above can't see
-// into a child process, so we rely on graceful boot/shutdown as the signal).
+// ---------------------------------------------------------------------------
+// End-to-end privacy proof: spawn the real binary
+// ---------------------------------------------------------------------------
+//
+// Boots dist/index.js in mode=local with no license key and verifies clean
+// startup + shutdown. This is the load-bearing privacy proof — it exercises
+// the actual gate in main() that prevents NrIngestManager construction.
+//
+// `beforeAll` self-bootstraps by running `npm run build` if dist/index.js is
+// missing. Without this, the test silently skipped on fresh checkouts where
+// the build step hadn't been run, producing false confidence.
+
 describe('privacy proof — built binary in mode=local', () => {
   const distIndex = resolve(__dirname, '..', 'dist', 'index.js');
 
-  it('boots, runs, and shuts down cleanly', async () => {
+  beforeAll(() => {
     if (!existsSync(distIndex)) {
-      // Fresh checkout / pre-build: skip rather than fail. CI runs `npm run
-      // build` before tests so this branch is only hit locally.
-      return;
+      // execFileSync with arg array (no shell) — `npm` and `build` are
+      // hardcoded so injection is moot, but matches project security hygiene.
+      execFileSync('npm', ['run', 'build'], { stdio: 'inherit' });
     }
+  }, 120_000);
 
+  it('boots, runs, and shuts down cleanly', async () => {
     const tmpStorage = mkdtempSync(join(tmpdir(), 'nr-mcp-privacy-'));
     const proc = spawn(process.execPath, [distIndex, '--stdio'], {
       env: {
@@ -159,6 +176,15 @@ describe('privacy proof — built binary in mode=local', () => {
       expect(stderrBuf).toMatch(/Starting nr-ai-mcp-server/);
       expect(stderrBuf).toMatch(/Server running on stdio transport/);
       expect(stderrBuf).not.toMatch(/Fatal error/);
+
+      // Privacy assertion: NrIngestManager is never started. The
+      // HarvestScheduler logs 'Harvest scheduler started' from start(), and
+      // NrIngestManager calls that start() in its constructor's wake. If
+      // someone removes the `if (config.mode !== 'local')` gate in
+      // src/index.ts, the harvest scheduler boots and this line fires.
+      // Asserting its absence is the observable signal that the gate held.
+      expect(stderrBuf).not.toMatch(/Harvest scheduler started/);
+
       // process.exit(0) is invoked from the SIGINT/SIGTERM/stdin-end shutdown
       // path; allow null in case of SIGKILL on timeout (still passing the
       // earlier asserts means boot succeeded).

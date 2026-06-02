@@ -675,7 +675,11 @@ export function loadMcpConfig(cliOptions?: Partial<CliOptions>): Readonly<McpSer
       const dashboardPortRaw = process.env.NR_AI_DASHBOARD_PORT
         ? parseInt(process.env.NR_AI_DASHBOARD_PORT, 10)
         : dashboardFile.port;
-      const dashboardPort = Number.isFinite(dashboardPortRaw) && dashboardPortRaw! > 0 && dashboardPortRaw! <= 65535
+      // Allow port 0 — Node's server.listen(0) assigns an OS-ephemeral port,
+      // which is essential for parallel test runs and useful when the user
+      // wants to avoid hard-coding a port. Negative or out-of-range values
+      // still fall back to the default 7777.
+      const dashboardPort = Number.isFinite(dashboardPortRaw) && dashboardPortRaw! >= 0 && dashboardPortRaw! <= 65535
         ? dashboardPortRaw!
         : 7777;
       const requestedHost = process.env.NR_AI_DASHBOARD_HOST ?? dashboardFile.host ?? '127.0.0.1';

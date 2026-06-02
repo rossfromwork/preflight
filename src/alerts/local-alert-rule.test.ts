@@ -24,8 +24,10 @@ describe('localAlertRuleSchema — valid rules', () => {
     expect(parsed.type).toBe('cost.window');
     if (parsed.type === 'cost.window') {
       expect(parsed.windowSeconds).toBe(3600);
-      // costPeriod default is 'today'
-      expect(parsed.costPeriod).toBe('today');
+      // costPeriod default is 'session' — v1.1's snapshot collector only
+      // populates sessionUsd, so a rule that omits costPeriod defaults to
+      // the only working period. See F-008.
+      expect(parsed.costPeriod).toBe('session');
     }
     expect(parsed.enabled).toBe(true); // default
     expect(parsed.operator).toBe('above'); // default

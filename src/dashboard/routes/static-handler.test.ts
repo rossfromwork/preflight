@@ -1,6 +1,6 @@
-import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { createStaticHandler } from './static-handler.js';
 import { IncomingMessage, ServerResponse } from 'node:http';
 
@@ -63,5 +63,57 @@ describe('static-handler', () => {
     const { req, res, status } = makeReqRes('/../../etc/passwd');
     await handler(req, res);
     expect(status()).toBe(403);
+  });
+
+  // Regression for F-002: vite.config.ts must use base:'/' so the built
+  // index.html references assets via absolute paths. With base:'./', a
+  // direct refresh on /sessions resolves relative './assets/x.js' against
+  // /sessions/ and returns 404. This test reads vite.config.ts source
+  // directly so a revert is caught even if no build artifact is present.
+  it('vite.config.ts has base:"/" (F-002 revert guard)', () => {
+    const viteConfigPath = resolve(__dirname, '..', '..', '..', 'vite.config.ts');
+    const src = readFileSync(viteConfigPath, 'utf-8');
+    // Strip line comments first so the regex doesn't match commentary like
+    // "with base:'./'" in the explanatory comment above the actual setting.
+    // Comments use `//` only in this file (no block comments around `base`).
+    const codeOnly = src
+      .split('\n')
+      .map((line) => line.replace(/\s*\/\/.*$/, ''))
+      .join('\n');
+    // Match the actual assignment: optional whitespace, base: '/' or "/" with
+    // optional trailing comma. Anchored to a line so 'base: "/foo/"' (which
+    // a future contributor might add for a sub-path deployment) also passes
+    // — but 'base: "./"' (the F-002 bug) is rejected.
+    expect(codeOnly).toMatch(/^\s*base:\s*['"]\/['"],?\s*$/m);
+    expect(codeOnly).not.toMatch(/^\s*base:\s*['"]\.\//m);
+  });
+
+  // Regression for F-002: when the SPA fallback serves index.html for an
+  // extensionless route like /sessions, the served HTML must reference
+  // assets via absolute paths (/assets/...) so the browser doesn't
+  // resolve them against /sessions/ and produce 404s. This guards
+  // against vite.config.ts regressing to base:'./' which produces
+  // relative paths in the built HTML.
+  it('serves index.html with absolute asset paths on SPA fallback for non-root routes', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'static-'));
+    writeFileSync(
+      join(dir, 'index.html'),
+      '<!doctype html><html><head>' +
+        '<script type="module" crossorigin src="/assets/index-abc.js"></script>' +
+        '<link rel="stylesheet" crossorigin href="/assets/index-abc.css">' +
+        '</head><body><div id="root"></div></body></html>',
+    );
+    mkdirSync(join(dir, 'assets'));
+    writeFileSync(join(dir, 'assets', 'index-abc.js'), 'console.log(1)');
+    const handler = createStaticHandler(dir);
+    const { req, res, chunks, status } = makeReqRes('/sessions/abc-123');
+    await handler(req, res);
+    expect(status()).toBe(200);
+    const html = Buffer.concat(chunks).toString();
+    // Asset references must be absolute, not relative.
+    expect(html).toContain('src="/assets/');
+    expect(html).toContain('href="/assets/');
+    expect(html).not.toMatch(/src="\.\/assets\//);
+    expect(html).not.toMatch(/href="\.\/assets\//);
   });
 });

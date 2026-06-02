@@ -1,5 +1,18 @@
+// Distinct error class for 404 responses so callers can treat
+// "feature unavailable" differently from a real server error. Used by the
+// recent-alerts panel: in cloud mode the alert engine is not constructed,
+// so /api/alerts/recent returns 404 — the UI must render an empty state,
+// not a permanent red error banner. See F-007 in docs/CODE_REVIEW.md.
+export class NotFoundError extends Error {
+  constructor(path: string) {
+    super(`Not found: ${path}`);
+    this.name = 'NotFoundError';
+  }
+}
+
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(path);
+  if (res.status === 404) throw new NotFoundError(path);
   if (!res.ok) throw new Error(`${res.status} ${res.statusText} for ${path}`);
   return (await res.json()) as T;
 }

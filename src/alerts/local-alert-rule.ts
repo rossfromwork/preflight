@@ -54,7 +54,12 @@ const percentileSchema = z.union([
   z.literal(99),
 ]);
 
-const costPeriodSchema = z.enum(['session', 'today', 'week']).default('today');
+// Default to 'session' because v1.1's snapshot collector only populates
+// sessionUsd — today/week always read 0 and any rule asking for those
+// periods silently never fires. parseLocalAlertRules logs a warning when
+// today/week is configured so users editing rules.json don't get a silent
+// no-op. See F-008 in docs/CODE_REVIEW.md.
+const costPeriodSchema = z.enum(['session', 'today', 'week']).default('session');
 
 // ---------------------------------------------------------------------------
 // Rule-type schemas

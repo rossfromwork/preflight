@@ -57,6 +57,17 @@ export interface LiveEventBusOptions {
 
 const DEFAULT_BUFFER_SIZE = 100;
 
+export interface SeqEntry<E extends LiveEventName = LiveEventName> {
+  readonly seq: number;
+  readonly payload: LiveEventMap[E];
+}
+
+// Internal channel prefix used by onWithSeq/emit so the bus can deliver the
+// global seq alongside the payload without breaking the plain on()/emit()
+// API. Subscribers who don't need the seq use on(); the SSE handler uses
+// onWithSeq() so its frame ids match the bus's replay buffer namespace.
+const SEQ_PREFIX = '__seq__:';
+
 export class LiveEventBus {
   private readonly emitter = new EventEmitter();
   private readonly buffer: ReplayEntry[] = [];
@@ -79,11 +90,33 @@ export class LiveEventBus {
     this.emitter.off(event, handler as (...args: unknown[]) => void);
   }
 
+  // Subscribe with the bus's global sequence number alongside the payload.
+  // The seq is the same value stored in the replay buffer, so SSE consumers
+  // can use it for frame ids and reconnect-replay filtering without a
+  // namespace mismatch. See F-005 in docs/CODE_REVIEW.md.
+  onWithSeq<E extends LiveEventName>(
+    event: E,
+    handler: (entry: SeqEntry<E>) => void,
+  ): void {
+    this.emitter.on(SEQ_PREFIX + event, handler as (...args: unknown[]) => void);
+  }
+
+  offWithSeq<E extends LiveEventName>(
+    event: E,
+    handler: (entry: SeqEntry<E>) => void,
+  ): void {
+    this.emitter.off(SEQ_PREFIX + event, handler as (...args: unknown[]) => void);
+  }
+
   emit<E extends LiveEventName>(event: E, payload: LiveEventMap[E]): void {
     const seq = this.nextSeq++;
     this.buffer.push({ seq, event, payload });
     if (this.buffer.length > this.bufferSize) this.buffer.shift();
+    // Deliver to plain subscribers (payload only) and seq-aware subscribers
+    // ({seq, payload}). Both are dispatched synchronously so the buffer/seq
+    // invariants are visible to all subscribers.
     this.emitter.emit(event, payload);
+    this.emitter.emit(SEQ_PREFIX + event, { seq, payload } satisfies SeqEntry<E>);
   }
 
   replayFrom(lastSeq: number): ReplayEntry[] {

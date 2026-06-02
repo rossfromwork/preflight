@@ -5,7 +5,14 @@ import { resolve } from 'node:path';
 export default defineConfig({
   root: resolve(__dirname, 'src/web'),
   plugins: [react()],
-  base: './',
+  // Absolute base so the SPA loads correctly when the user navigates
+  // directly to a non-root URL like /sessions or /history. The static
+  // handler serves index.html for any extensionless path; with base:'./',
+  // the served HTML's relative asset paths would resolve against the
+  // current URL ('./assets/x.js' under '/sessions/' becomes
+  // '/sessions/assets/x.js' — a 404). Absolute paths always resolve from
+  // the origin.
+  base: '/',
   build: {
     outDir: resolve(__dirname, 'dist/web'),
     emptyOutDir: true,

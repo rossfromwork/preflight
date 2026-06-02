@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useLiveStore, type AlertEvent } from '../store/liveStore';
 import { Kpi } from '../components/Kpi';
 import { Sparkline } from '../components/Sparkline';
-import { fetchRecentAlerts, qk } from '../api/client';
+import { fetchRecentAlerts, NotFoundError, qk } from '../api/client';
 
 const HEADER_TIMESTAMP_FORMAT = {
   weekday: 'short',
@@ -106,14 +106,31 @@ export function Today(): JSX.Element {
   );
 }
 
-function RecentAlertsPanel(): JSX.Element {
-  const { data, isLoading, error } = useQuery<readonly AlertEvent[]>({
+function RecentAlertsPanel(): JSX.Element | null {
+  // The query returns `null` when the endpoint is 404 (cloud mode — no
+  // alert engine), so callers can render an empty / hidden state instead
+  // of a permanent red error banner. retry: false avoids the 4× request
+  // multiplier React Query would otherwise produce on every refetch.
+  // See F-007 in docs/CODE_REVIEW.md.
+  const { data, isLoading, error } = useQuery<readonly AlertEvent[] | null>({
     queryKey: qk.alertsRecent,
-    queryFn: () => fetchRecentAlerts() as Promise<readonly AlertEvent[]>,
+    queryFn: async () => {
+      try {
+        return (await fetchRecentAlerts()) as readonly AlertEvent[];
+      } catch (err) {
+        if (err instanceof NotFoundError) return null;
+        throw err;
+      }
+    },
     refetchInterval: RECENT_ALERTS_REFETCH_MS,
+    retry: false,
   });
 
-  const entries = data ?? [];
+  // Cloud mode (or alerts disabled) → endpoint 404 → null. Render nothing
+  // so the panel doesn't claim there's an error when there isn't one.
+  if (data === null) return null;
+
+  const entries: readonly AlertEvent[] = data ?? [];
 
   return (
     <div className="bg-bg-panel border border-bg-line rounded p-3">

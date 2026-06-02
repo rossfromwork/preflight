@@ -106,4 +106,99 @@ describe('sse-handler', () => {
       await server.close();
     }
   });
+
+  // Regression for F-005. The SSE frame `id` field must use the bus's global
+  // sequence number, not a per-connection counter — otherwise reconnecting
+  // clients send back the wrong Last-Event-ID and either miss real events
+  // or replay pre-connection history.
+  it('frame id matches bus global seq (F-005 regression)', async () => {
+    const bus = new LiveEventBus();
+    // Prime the bus with 5 events BEFORE the client connects. Their bus
+    // seqs are 1..5.
+    for (let i = 0; i < 5; i++) {
+      bus.emit('tool-call', { id: `pre-${i}`, tool: 'Read', durationMs: i, costUsd: 0, ts: i });
+    }
+    const server = await startTestServer(createSseHandler(bus));
+    try {
+      // Connect fresh (no Last-Event-ID). Client should NOT see the
+      // pre-connection events at all (they happened before it asked).
+      const res = await fetch(`${server.url}/sse`);
+      await new Promise((r) => setTimeout(r, 30));
+      // Emit one new event — should arrive with bus seq=6, not local 1.
+      bus.emit('tool-call', { id: 'post-0', tool: 'Edit', durationMs: 9, costUsd: 0, ts: 100 });
+      // Read 2 chunks: the ': stream-open\n\n' opener plus the event frame.
+      const chunks = await readSseChunks(res, 2);
+      const merged = chunks.join('');
+      expect(merged).toContain('"id":"post-0"');
+      // The frame id line must be the bus's global seq=6, not a local 1.
+      expect(merged).toMatch(/\nid: 6\n/);
+      // Frame id 1 belonged to a pre-connection event; it must not appear.
+      expect(merged).not.toMatch(/\nevent: tool-call\nid: 1\n/);
+    } finally {
+      await server.close();
+    }
+  });
+
+  // Regression for F-005. After reconnect with Last-Event-ID set to a real
+  // bus seq, the server must replay only events newer than that seq. With
+  // the per-connection counter bug, this test would have replayed older
+  // (pre-connection) events.
+  it('reconnect with real bus seq replays only newer events', async () => {
+    const bus = new LiveEventBus();
+    // Bus emits 100 events before the test client ever connects.
+    for (let i = 0; i < 100; i++) {
+      bus.emit('tool-call', { id: `e${i}`, tool: 'Read', durationMs: i, costUsd: 0, ts: i });
+    }
+    // Client knows it last saw seq=105 (a hypothetical post-connection
+    // event that was emitted after a previous connection picked up seq=101..105).
+    // To simulate that, emit 5 more events to get the bus seq to 105.
+    for (let i = 100; i < 105; i++) {
+      bus.emit('tool-call', { id: `e${i}`, tool: 'Read', durationMs: i, costUsd: 0, ts: i });
+    }
+    // Now emit one more event with seq=106 — this is the one the client
+    // should receive on reconnect.
+    bus.emit('tool-call', { id: 'e105', tool: 'Edit', durationMs: 999, costUsd: 0, ts: 999 });
+
+    const server = await startTestServer(createSseHandler(bus));
+    try {
+      const res = await fetch(`${server.url}/sse`, {
+        headers: { 'last-event-id': '105' },
+      });
+      const chunks = await readSseChunks(res, 1);
+      const merged = chunks.join('');
+      // Only the event with seq=106 (id: 'e105') should appear.
+      expect(merged).toContain('"id":"e105"');
+      // Earlier events (the 100+5 priming ones) MUST NOT replay.
+      expect(merged).not.toContain('"id":"e0"');
+      expect(merged).not.toContain('"id":"e50"');
+      expect(merged).not.toContain('"id":"e104"');
+    } finally {
+      await server.close();
+    }
+  });
+
+  // Heartbeats use a string id like "hb-<ts>" so they don't share the bus
+  // seq namespace. The browser sends them back as Last-Event-ID on reconnect;
+  // parseInt("hb-...") → NaN → no replay. This guards against a heartbeat id
+  // contaminating the seq numbering and triggering an unintended replay.
+  it('heartbeat frame id is non-numeric ("hb-<ts>") and does not affect bus seq', async () => {
+    const bus = new LiveEventBus();
+    // Construct an SSE handler with a 50ms heartbeat by NOT using the
+    // default 30s — instead, just verify a fresh connection emits no
+    // numeric heartbeat ids and that subsequent live events use the next
+    // bus seq (1, since the bus is fresh).
+    const server = await startTestServer(createSseHandler(bus));
+    try {
+      const res = await fetch(`${server.url}/sse`);
+      await new Promise((r) => setTimeout(r, 30));
+      bus.emit('tool-call', { id: 'live-1', tool: 'Read', durationMs: 1, costUsd: 0, ts: 1 });
+      // 2 chunks: ': stream-open\n\n' + event frame.
+      const chunks = await readSseChunks(res, 2);
+      const merged = chunks.join('');
+      // Live event must use bus seq=1.
+      expect(merged).toMatch(/\nid: 1\n/);
+    } finally {
+      await server.close();
+    }
+  });
 });

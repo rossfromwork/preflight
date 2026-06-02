@@ -1208,10 +1208,23 @@ describe('dashboard config', () => {
     expect(config.dashboard.port).toBe(9999);
   });
 
-  it('clamps dashboard port to minimum 1', () => {
+  it('passes dashboard port 0 through as OS-assigned ephemeral', () => {
+    // Port 0 is special-cased: Node's server.listen(0) lets the OS pick an
+    // ephemeral port. Required for parallel test runs and useful for users
+    // who want to avoid port conflicts. Negative values still fall back to
+    // the default 7777 (see test below).
     process.env.NEW_RELIC_LICENSE_KEY = 'test-key';
     process.env.NEW_RELIC_ACCOUNT_ID = '12345';
     process.env.NR_AI_DASHBOARD_PORT = '0';
+    const configPath = writeConfigFile({});
+    const config = loadMcpConfig({ config: configPath });
+    expect(config.dashboard.port).toBe(0);
+  });
+
+  it('falls back to default 7777 when dashboard port is negative', () => {
+    process.env.NEW_RELIC_LICENSE_KEY = 'test-key';
+    process.env.NEW_RELIC_ACCOUNT_ID = '12345';
+    process.env.NR_AI_DASHBOARD_PORT = '-1';
     const configPath = writeConfigFile({});
     const config = loadMcpConfig({ config: configPath });
     expect(config.dashboard.port).toBe(7777);

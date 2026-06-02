@@ -747,6 +747,21 @@ function loadAlertRulesFromDisk(
         validCount: valid.length,
       });
     }
+    // Warn about cost.window rules with today/week period — v1.1's snapshot
+    // collector only populates sessionUsd, so today/week rules always read 0
+    // and never fire. Fires for both explicitly-configured AND defaulted
+    // values (default is now 'session' per F-008, but if a rules.json sets
+    // 'today' or 'week' explicitly, we still want the user to know it
+    // silently no-ops). See F-008 in docs/CODE_REVIEW.md.
+    for (const rule of valid) {
+      if (rule.type === 'cost.window' && rule.costPeriod !== 'session') {
+        logger.warn(
+          `Rule '${rule.id}' uses costPeriod='${rule.costPeriod}', which is not implemented in v1.1. ` +
+            `The rule will read 0 every cycle and never fire. ` +
+            `Use costPeriod='session' until daily/weekly aggregation lands.`,
+        );
+      }
+    }
     engine.loadRules(valid);
     logger.info('Alert rules loaded', { rulesPath, count: valid.length });
   } catch (err) {

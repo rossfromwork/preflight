@@ -311,14 +311,22 @@ export class AlertSnapshotCollector {
       }[] = [];
       for (const [tool, percentiles] of Object.entries(metrics.byTool)) {
         if (!percentiles) continue;
-        // Only emit when at least p95 is available; surface 0 for any
-        // missing percentile (rule comparator handles 0 sensibly via
-        // `above` / `above_or_equals`).
-        if (typeof percentiles.p95 === 'number') {
+        // Emit an entry when ANY of p50/p95/p99 is available. Missing
+        // percentiles surface as 0 to the rule comparator, which treats 0
+        // as below any positive threshold — so a `latency.percentile`
+        // rule asking for p99 still fires when the tracker has p99 data
+        // even if p95 happens to be missing. See F-006: gating on p95
+        // alone caused p50/p99 rules to silently never fire when sample
+        // count was too low to compute all three.
+        const hasAny =
+          typeof percentiles.p50 === 'number' ||
+          typeof percentiles.p95 === 'number' ||
+          typeof percentiles.p99 === 'number';
+        if (hasAny) {
           out.push({
             tool,
             p50Ms: typeof percentiles.p50 === 'number' ? percentiles.p50 : 0,
-            p95Ms: percentiles.p95,
+            p95Ms: typeof percentiles.p95 === 'number' ? percentiles.p95 : 0,
             p99Ms: typeof percentiles.p99 === 'number' ? percentiles.p99 : 0,
           });
         }

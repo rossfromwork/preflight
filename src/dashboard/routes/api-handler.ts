@@ -14,20 +14,37 @@ interface RawAuditRecord {
   readonly developer: string;
   readonly filePath?: string;
   readonly command?: string;
-  readonly securityAlert?: unknown;
+  readonly securityAlert?: { readonly severity: string; readonly alertType: string } | undefined;
 }
 
-// Strip secret-bearing substrings from an audit record before it crosses the
-// HTTP boundary. Mirrors the redaction applied to NR audit events in
-// auditRecordToNrEvent so /api/audit doesn't leak raw filePath/command tokens.
-function redactAuditRecord(entry: unknown): unknown {
-  if (entry == null || typeof entry !== 'object') return entry;
-  const r = entry as RawAuditRecord;
+// Shape consumed by the SPA Audit view. Distinct from RawAuditRecord so that
+// (1) field names match the React component (ts/target/classification, not
+// timestamp/detail/action), (2) we don't leak filePath/command/developer to
+// the browser by accident, and (3) classification surfaces the security
+// alertType chip (sensitive_file/destructive_command/external_network)
+// directly so the SPA's filter chips work without a second mapping.
+interface AuditEntryDto {
+  readonly ts: number;
+  readonly sessionId: string | null;
+  readonly tool: string;
+  readonly target: string;
+  readonly classification: string;
+}
+
+function toAuditEntry(entry: unknown): AuditEntryDto {
+  const r = (entry ?? {}) as RawAuditRecord;
+  const target = typeof r.detail === 'string' ? redactSensitive(r.detail) : '';
+  // Prefer the explicit security classification when present; fall back to
+  // 'other' for routine tool calls so the "All" filter still shows them
+  // while specific filters (sensitive_file/destructive_command/external_network)
+  // surface only flagged entries.
+  const classification = r.securityAlert?.alertType ?? 'other';
   return {
-    ...r,
-    detail: typeof r.detail === 'string' ? redactSensitive(r.detail) : r.detail,
-    ...(r.filePath != null ? { filePath: redactSensitive(r.filePath) } : {}),
-    ...(r.command != null ? { command: redactSensitive(r.command) } : {}),
+    ts: r.timestamp,
+    sessionId: r.sessionId ?? null,
+    tool: r.tool,
+    target,
+    classification,
   };
 }
 
@@ -108,7 +125,7 @@ export function createApiHandler(deps: ApiHandlerDeps): (req: IncomingMessage, r
   routes.set('GET /api/audit', (_req, res) => {
     if (!deps.auditTrailManager) return unavailable(res, 'auditTrailManager');
     const log = deps.auditTrailManager.getAuditLog();
-    jsonOk(res, log.map(redactAuditRecord));
+    jsonOk(res, log.map(toAuditEntry));
   });
 
   routes.set('GET /api/weekly', (req, res) => {

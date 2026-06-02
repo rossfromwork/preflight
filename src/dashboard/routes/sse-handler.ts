@@ -1,10 +1,15 @@
 import { IncomingMessage, ServerResponse } from 'node:http';
 
-import { LiveEventBus, LiveEventName, LiveEventMap } from '../live-event-bus.js';
+import { LiveEventBus, LiveEventName, SeqEntry } from '../live-event-bus.js';
 
 const HEARTBEAT_MS = 30_000;
 
-function frame(event: string, id: number, data: unknown): string {
+// Frame id is `string | number` so heartbeats can use a non-numeric id like
+// "hb-<ts>". The browser sends it back as Last-Event-ID on reconnect; the
+// server's parseInt will return NaN for "hb-..." which falls through to "no
+// replay" — safer than letting a heartbeat id contaminate the bus seq
+// namespace. See F-005 in docs/CODE_REVIEW.md.
+function frame(event: string, id: string | number, data: unknown): string {
   return `event: ${event}\nid: ${id}\ndata: ${JSON.stringify(data)}\n\n`;
 }
 
@@ -20,22 +25,29 @@ export function createSseHandler(
     });
     res.write(': stream-open\n\n');
 
+    // Parse Last-Event-ID. Heartbeats use string ids like "hb-<ts>" which
+    // produce NaN here, falling through to no replay. Negative or invalid
+    // values also fall through. See F-010 in docs/CODE_REVIEW.md.
     const lastEventIdHeader = req.headers['last-event-id'];
-    const lastSeq =
+    const rawSeq =
       typeof lastEventIdHeader === 'string' ? parseInt(lastEventIdHeader, 10) : NaN;
-    const replaySeq = Number.isFinite(lastSeq) ? lastSeq : -1;
+    const replaySeq = Number.isFinite(rawSeq) && rawSeq >= 0 ? rawSeq : -1;
     if (replaySeq >= 0) {
+      // Replay buffered events with global seq > lastSeq, using the bus's
+      // own seq for the frame id. This keeps replay and live frames in the
+      // same numbering namespace — fixes F-005, where a per-connection
+      // counter caused reconnect to either miss events or replay
+      // pre-connection history.
       for (const entry of bus.replayFrom(replaySeq)) {
         res.write(frame(entry.event, entry.seq, entry.payload));
       }
     }
 
-    let nextLocalSeq = (Number.isFinite(lastSeq) ? lastSeq : 0) + 1;
+    // Live frames carry the bus's global seq (delivered via onWithSeq).
     const onAny =
       <E extends LiveEventName>(event: E) =>
-      (payload: LiveEventMap[E]): void => {
-        const seq = nextLocalSeq++;
-        res.write(frame(event, seq, payload));
+      (entry: SeqEntry<E>): void => {
+        res.write(frame(event, entry.seq, entry.payload));
       };
 
     const handlers = {
@@ -44,23 +56,30 @@ export function createSseHandler(
       'anti-pattern': onAny('anti-pattern'),
       'alert': onAny('alert'),
     } as const;
-    bus.on('tool-call', handlers['tool-call']);
-    bus.on('cost-update', handlers['cost-update']);
-    bus.on('anti-pattern', handlers['anti-pattern']);
-    bus.on('alert', handlers['alert']);
+    bus.onWithSeq('tool-call', handlers['tool-call']);
+    bus.onWithSeq('cost-update', handlers['cost-update']);
+    bus.onWithSeq('anti-pattern', handlers['anti-pattern']);
+    bus.onWithSeq('alert', handlers['alert']);
 
+    // Heartbeats use a string id ("hb-<ts>") so they don't share the bus
+    // seq namespace. They aren't stored in the bus buffer, so a client that
+    // last received a heartbeat will reconnect with Last-Event-ID: "hb-..."
+    // → parseInt → NaN → no replay. Live events resume from whichever real
+    // seq the client most recently saw before the heartbeat.
     const heartbeat = setInterval(() => {
-      const seq = nextLocalSeq++;
-      res.write(frame('heartbeat', seq, { ts: Date.now() }));
+      res.write(frame('heartbeat', `hb-${Date.now()}`, { ts: Date.now() }));
     }, HEARTBEAT_MS);
     if (typeof heartbeat.unref === 'function') heartbeat.unref();
 
+    let cleaned = false;
     const cleanup = (): void => {
+      if (cleaned) return;
+      cleaned = true;
       clearInterval(heartbeat);
-      bus.off('tool-call', handlers['tool-call']);
-      bus.off('cost-update', handlers['cost-update']);
-      bus.off('anti-pattern', handlers['anti-pattern']);
-      bus.off('alert', handlers['alert']);
+      bus.offWithSeq('tool-call', handlers['tool-call']);
+      bus.offWithSeq('cost-update', handlers['cost-update']);
+      bus.offWithSeq('anti-pattern', handlers['anti-pattern']);
+      bus.offWithSeq('alert', handlers['alert']);
     };
     req.on('close', cleanup);
     res.on('close', cleanup);

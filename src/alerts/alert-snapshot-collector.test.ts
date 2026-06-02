@@ -231,6 +231,57 @@ describe('AlertSnapshotCollector — tracker reads', () => {
     ]);
   });
 
+  // Regression for F-006: when the tracker has only p50 (no p95/p99 because
+  // sample count is too low), the snapshot must still emit the tool with the
+  // p50 value populated and p95/p99 as 0. Previously the entry was dropped
+  // entirely because the gate required `typeof p95 === 'number'`.
+  it('emits a latency entry when only p50 is available (F-006)', () => {
+    const deps: AlertSnapshotCollectorDeps = {
+      latencyTracker: {
+        getMetrics: () => ({
+          byTool: {
+            Read: { p50: 100 } as { p50?: number; p95?: number; p99?: number },
+          },
+        }),
+      },
+    };
+    const collector = new AlertSnapshotCollector(deps);
+    const snap = collector.snapshot(NOW, []);
+    expect(snap.latency).toEqual([{ tool: 'Read', p50Ms: 100, p95Ms: 0, p99Ms: 0 }]);
+  });
+
+  // Regression for F-006: a `latency.percentile` rule asking for p99 must
+  // see the p99 value even when p95 is missing.
+  it('emits a latency entry when only p99 is available (F-006)', () => {
+    const deps: AlertSnapshotCollectorDeps = {
+      latencyTracker: {
+        getMetrics: () => ({
+          byTool: {
+            Bash: { p99: 5000 } as { p50?: number; p95?: number; p99?: number },
+          },
+        }),
+      },
+    };
+    const collector = new AlertSnapshotCollector(deps);
+    const snap = collector.snapshot(NOW, []);
+    expect(snap.latency).toEqual([{ tool: 'Bash', p50Ms: 0, p95Ms: 0, p99Ms: 5000 }]);
+  });
+
+  it('does not emit a latency entry when no percentiles are available', () => {
+    const deps: AlertSnapshotCollectorDeps = {
+      latencyTracker: {
+        getMetrics: () => ({
+          byTool: {
+            Read: {} as { p50?: number; p95?: number; p99?: number },
+          },
+        }),
+      },
+    };
+    const collector = new AlertSnapshotCollector(deps);
+    const snap = collector.snapshot(NOW, []);
+    expect(snap.latency).toEqual([]);
+  });
+
   it('swallows errors from costTracker and falls back to zeros', () => {
     const deps: AlertSnapshotCollectorDeps = {
       costTracker: {

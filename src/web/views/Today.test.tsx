@@ -252,4 +252,42 @@ describe('Today view — Recent alerts panel', () => {
 
     expect(await screen.findByText(/Error loading recent alerts/i)).toBeInTheDocument();
   });
+
+  // Regression for F-007: in cloud mode the alert engine isn't constructed
+  // and /api/alerts/recent returns 404. The panel must render nothing —
+  // not a permanent red error banner. Without this fix users running the
+  // dashboard in cloud mode see "Error loading recent alerts" indefinitely.
+  //
+  // IMPORTANT: this test uses a QueryClient with default retries (3) so the
+  // suppression must come from the component's own `retry: false`, not the
+  // test harness's `retry: 0` default. Without this distinction, removing
+  // `retry: false` from Today.tsx would still pass with the default helper.
+  it('renders nothing (no error banner) when /api/alerts/recent returns 404', async () => {
+    const fetchSpy = vi.fn(
+      async () =>
+        new Response('{"error":"not_found"}', {
+          status: 404,
+          headers: { 'content-type': 'application/json' },
+        }),
+    );
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    // Default QueryClient — would retry 3× on a thrown error if the
+    // component itself didn't set `retry: false` on the alerts query.
+    renderToday(new QueryClient());
+
+    // Wait long enough that React Query's retry timers (~1s exponential
+    // backoff) would have fired if `retry: false` weren't honored.
+    await new Promise((r) => setTimeout(r, 100));
+
+    expect(screen.queryByText(/Error loading recent alerts/i)).toBeNull();
+    expect(screen.queryByText(/recent alerts/i)).toBeNull();
+    expect(screen.queryByText(/No alerts in recent history/i)).toBeNull();
+    // Only one fetch call — the component's retry: false suppressed retries.
+    // (Plus other queries the Today view fires; we only count alerts/recent.)
+    const alertsCalls = fetchSpy.mock.calls.filter((c) =>
+      String(c[0]).includes('/api/alerts/recent'),
+    );
+    expect(alertsCalls).toHaveLength(1);
+  });
 });
