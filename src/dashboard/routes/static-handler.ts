@@ -19,6 +19,21 @@ const MIME: Record<string, string> = {
   '.map':  'application/json; charset=utf-8',
 };
 
+async function serveIndexFallback(root: string, res: ServerResponse): Promise<void> {
+  try {
+    const indexPath = join(root, 'index.html');
+    const data = await readFile(indexPath);
+    res.writeHead(200, {
+      'content-type': 'text/html; charset=utf-8',
+      'content-length': String(data.length),
+    });
+    res.end(data);
+  } catch {
+    res.writeHead(404);
+    res.end();
+  }
+}
+
 export function createStaticHandler(rootDir: string): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   const root = resolve(rootDir);
   return async (req, res) => {
@@ -34,9 +49,7 @@ export function createStaticHandler(rootDir: string): (req: IncomingMessage, res
     try {
       const st = await stat(target);
       if (!st.isFile()) {
-        res.writeHead(404);
-        res.end();
-        return;
+        return await serveIndexFallback(root, res);
       }
       const ext = extname(target).toLowerCase();
       const type = MIME[ext] ?? 'application/octet-stream';
@@ -47,8 +60,7 @@ export function createStaticHandler(rootDir: string): (req: IncomingMessage, res
       });
       res.end(data);
     } catch {
-      res.writeHead(404);
-      res.end();
+      return await serveIndexFallback(root, res);
     }
   };
 }

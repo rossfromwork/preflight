@@ -6,6 +6,7 @@
  */
 
 import { Command } from 'commander';
+import { execSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync, unlinkSync, copyFileSync, realpathSync } from 'node:fs';
 import { dirname, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
@@ -65,6 +66,27 @@ function writeJsonFile(path: string, data: Record<string, unknown>): void {
 }
 
 // ---------------------------------------------------------------------------
+// PATH verification
+// ---------------------------------------------------------------------------
+
+export function verifyBinaryOnPath(): boolean {
+  try {
+    execSync('which nr-ai-observe', { stdio: 'pipe' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function printPathWarning(): void {
+  print('\n⚠ nr-ai-observe is not on your PATH.');
+  print('  Claude Code hooks will fail with "command not found" until this is resolved.');
+  print('  Fix: run `npm link` in the project directory, or install globally:');
+  print('    npm install -g nr-ai-observatory');
+  print('');
+}
+
+// ---------------------------------------------------------------------------
 // Install handler
 // ---------------------------------------------------------------------------
 
@@ -94,6 +116,12 @@ function handleInstall(options: { licenseKey?: string; accountId?: string; proje
     print(`\n✓ New Relic config written: ${NR_CONFIG_PATH}`);
   } else if (options.licenseKey || options.accountId) {
     print('\n⚠ Both --license-key and --account-id are required to save NR config. Skipped.');
+  }
+
+  if (verifyBinaryOnPath()) {
+    print('\n✓ nr-ai-observe is on your PATH');
+  } else {
+    printPathWarning();
   }
 
   print('\nNext steps:');

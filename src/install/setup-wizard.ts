@@ -3,7 +3,7 @@ import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { normalizeDeveloperName } from '../config.js';
-import { runInstallCli } from './cli.js';
+import { runInstallCli, verifyBinaryOnPath } from './cli.js';
 
 const DEFAULT_STORAGE_PATH = resolve(homedir(), '.nr-ai-observe');
 const CONFIG_PATH = resolve(DEFAULT_STORAGE_PATH, 'config.json');
@@ -196,6 +196,15 @@ export async function runSetupWizard(): Promise<void> {
     print('\nRunning hook installer...');
     await runInstallCli(['install']);
     print('Hooks installed.');
+
+    if (verifyBinaryOnPath()) {
+      print('✓ nr-ai-observe is on your PATH');
+    } else {
+      print('\n⚠ nr-ai-observe is not on your PATH.');
+      print('  Claude Code hooks will fail with "command not found" until this is resolved.');
+      print('  Fix: run `npm link` in the project directory, or install globally:');
+      print('    npm install -g nr-ai-observatory');
+    }
   }
 
   // Step 7: Dashboard deploy — show manual command (deploy-dashboard.ts is not a library)

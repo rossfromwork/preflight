@@ -87,7 +87,7 @@ export function createApiHandler(deps: ApiHandlerDeps): (req: IncomingMessage, r
     if (!Number.isNaN(parsed)) {
       limit = Math.min(Math.max(parsed, 1), 500);
     }
-    const allSessions = deps.sessionStore.listSessions();
+    const allSessions = deps.sessionStore.loadAllSessions?.() ?? deps.sessionStore.listSessions();
     const sliced = allSessions.slice(-limit);
     jsonOk(res, sliced);
   });

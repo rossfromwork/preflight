@@ -4,10 +4,10 @@ import { fetchSessionsList, fetchSessionDetail, qk } from '../api/client';
 
 interface SessionRow {
   readonly sessionId: string;
-  readonly startTime: string;
-  readonly toolCallCount: number;
-  readonly estimatedCostUsd: number | null;
-  readonly outcome: string | null;
+  readonly startTime?: string;
+  readonly toolCallCount?: number;
+  readonly estimatedCostUsd?: number | null;
+  readonly outcome?: string | null;
 }
 
 interface SessionDetail {
@@ -70,12 +70,12 @@ export function Sessions(): JSX.Element {
             >
               <div className="flex justify-between">
                 <span className="font-mono text-ink-base">{r.sessionId.slice(0, 8)}</span>
-                <span className="text-ink-muted">{fmtTime(r.startTime)}</span>
+                <span className="text-ink-muted">{r.startTime ? fmtTime(r.startTime) : '—'}</span>
               </div>
               <div className="flex justify-between mt-1 text-ink-subtle text-[11px]">
-                <span>{r.toolCallCount} calls</span>
+                <span>{r.toolCallCount ?? 0} calls</span>
                 <span>
-                  {r.estimatedCostUsd !== null ? `$${r.estimatedCostUsd.toFixed(2)}` : '—'}
+                  {r.estimatedCostUsd != null ? `$${r.estimatedCostUsd.toFixed(2)}` : '—'}
                 </span>
               </div>
             </button>

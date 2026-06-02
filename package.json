@@ -36,7 +36,10 @@
     "deploy:dashboard:teardown": "npx tsx scripts/deploy-dashboard.ts --all --teardown",
     "backfill:sessions": "npx tsx scripts/backfill-sessions.ts",
     "sync:shared": "npx tsx scripts/sync-shared.ts",
-    "check:bundle-size": "npx tsx scripts/check-bundle-size.ts"
+    "check:bundle-size": "npx tsx scripts/check-bundle-size.ts",
+    "start": "node dist/index.js --stdio",
+    "start:local": "NEW_RELIC_AI_MODE=local node dist/index.js --stdio",
+    "prepare": "npm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
