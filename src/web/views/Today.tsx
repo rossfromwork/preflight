@@ -118,8 +118,11 @@ export function Today(): JSX.Element {
 
   const calls = persistedTodayCalls;
   const spendLoading = !cost && costPending && sessionsPending;
-  const todayTotal = cost?.todayTotalUsd
-    ?? (persistedTodaySpend + (costApi?.cost?.sessionTotalCostUsd ?? 0));
+  // Daily spend = max of SSE-pushed daily total vs. persisted sessions + current
+  // session from REST. SSE uses priorDailyCostUsd computed at server startup,
+  // which can lag behind if other sessions completed since then.
+  const restDailyTotal = persistedTodaySpend + (costApi?.cost?.sessionTotalCostUsd ?? 0);
+  const todayTotal = Math.max(cost?.todayTotalUsd ?? 0, restDailyTotal);
 
   const currentSessionFlags = Math.max(apiAntiPatterns?.length ?? 0, antiPatterns.length);
   const flagsCount = persistedTodayFlags + currentSessionFlags;
@@ -146,7 +149,19 @@ export function Today(): JSX.Element {
         />
       </div>
 
-      <ForecastEodCard todayTotal={todayTotal} forecastEod={spendLoading ? null : (cost?.forecastEodUsd ?? costApi?.forecast?.forecastEndOfDayUsd ?? null)} />
+      <ForecastEodCard
+        todayTotal={todayTotal}
+        forecastEod={
+          // SSE cost-update already includes priorDailyCostUsd in the forecast.
+          // The REST fallback is session-level only, so add persisted spend.
+          spendLoading
+            ? null
+            : (cost?.forecastEodUsd
+                ?? (costApi?.forecast?.forecastEndOfDayUsd != null
+                  ? persistedTodaySpend + costApi.forecast.forecastEndOfDayUsd
+                  : null))
+        }
+      />
 
       {flagsCount > 0 && (
         <div className="mb-3 bg-bg-panel border border-accent-amber/40 rounded p-2.5 text-xs">

@@ -11,11 +11,6 @@ interface SessionCurrentResponse {
   }>;
 }
 
-interface CostResponse {
-  readonly cost?: { readonly sessionTotalCostUsd?: number | null };
-  readonly forecast?: { readonly forecastEndOfDayUsd?: number | null } | null;
-}
-
 function hydrateFromApi(): void {
   const store = useLiveStore.getState();
 
@@ -35,18 +30,12 @@ function hydrateFromApi(): void {
     })
     .catch(() => {});
 
-  fetch('/api/cost')
-    .then((r) => (r.ok ? (r.json() as Promise<CostResponse>) : null))
-    .then((data) => {
-      if (!data?.cost) return;
-      const sessionTotal = data.cost.sessionTotalCostUsd ?? 0;
-      store.setCost({
-        sessionTotalUsd: sessionTotal,
-        todayTotalUsd: sessionTotal,
-        forecastEodUsd: data.forecast?.forecastEndOfDayUsd ?? null,
-      });
-    })
-    .catch(() => {});
+  // Cost hydration intentionally skipped — the /api/cost endpoint returns
+  // session-scoped values that don't reflect the daily aggregate. Setting them
+  // in the store would race with SSE (which emits daily-aware totals) and cause
+  // the forecast to appear less than the daily spend. The Today view's React
+  // Query fallback (persistedTodaySpend + session cost) handles the pre-SSE
+  // window correctly.
 
   fetch('/api/anti-patterns')
     .then((r) => (r.ok ? (r.json() as Promise<unknown>) : null))

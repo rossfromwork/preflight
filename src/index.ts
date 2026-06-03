@@ -608,10 +608,16 @@ async function main(): Promise<void> {
             priorDailyCostUsd + costMetrics.sessionTotalCostUsd,
             priorWeeklyCostUsd + costMetrics.sessionTotalCostUsd,
           );
+          const sessionForecast = buildCostForecast(
+            costMetrics.sessionTotalCostUsd,
+            sessionStartMs,
+          );
           liveBus.emit('cost-update', {
             sessionTotalUsd: costMetrics.sessionTotalCostUsd,
             todayTotalUsd: priorDailyCostUsd + costMetrics.sessionTotalCostUsd,
-            forecastEodUsd: null,
+            forecastEodUsd: sessionForecast.forecastEndOfDayUsd !== null
+              ? priorDailyCostUsd + sessionForecast.forecastEndOfDayUsd
+              : null,
           });
         }
 
@@ -679,10 +685,16 @@ async function main(): Promise<void> {
             priorDailyCostUsd + costMetrics.sessionTotalCostUsd,
             priorWeeklyCostUsd + costMetrics.sessionTotalCostUsd,
           );
+          const sessionForecast = buildCostForecast(
+            costMetrics.sessionTotalCostUsd,
+            sessionStartMs,
+          );
           liveBus.emit('cost-update', {
             sessionTotalUsd: costMetrics.sessionTotalCostUsd,
             todayTotalUsd: priorDailyCostUsd + costMetrics.sessionTotalCostUsd,
-            forecastEodUsd: null,
+            forecastEodUsd: sessionForecast.forecastEndOfDayUsd !== null
+              ? priorDailyCostUsd + sessionForecast.forecastEndOfDayUsd
+              : null,
           });
         }
       },
