@@ -611,7 +611,10 @@ function LiveSessionPane({ sessions }: { sessions: SessionSummary[] }): JSX.Elem
                     >
                       {shortToolName(entry.toolName)}
                     </span>
-                    <span className="flex-1 truncate text-ink-subtle text-[10px]">
+                    <span
+                      className="flex-1 truncate text-ink-subtle text-[10px]"
+                      title={entry.filePath ?? entry.command ?? ''}
+                    >
                       {entry.filePath ?? entry.command ?? ''}
                     </span>
                     <span className="w-12 text-right tabular-nums text-ink-muted text-[10px]">

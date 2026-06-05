@@ -248,7 +248,10 @@ function Timeline({
             <span className="w-28 truncate font-medium text-ink-base" title={entry.toolName}>
               {shortToolName(entry.toolName)}
             </span>
-            <span className="flex-1 truncate text-ink-subtle text-[11px]">
+            <span
+              className="flex-1 truncate text-ink-subtle text-[11px]"
+              title={entry.filePath ?? entry.command ?? ''}
+            >
               {entry.filePath ?? entry.command ?? ''}
             </span>
             <span className="w-16 text-right tabular-nums text-ink-muted">

@@ -19,6 +19,7 @@ import {
   fetchPersonalCoach,
   qk,
 } from '../api/client';
+import { shortToolName } from '../lib/format';
 
 interface WeeklyRow {
   readonly weekStart?: string;
@@ -152,7 +153,7 @@ export function History(): JSX.Element {
       <div className="grid grid-cols-2 gap-3">
         <Panel title="Weekly efficiency · last 8">
           <div className="h-44 min-w-0">
-            <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+            <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
               <AreaChart data={weeklyData}>
                 <defs>
                   <linearGradient id="effGradient" x1="0" y1="0" x2="0" y2="1">
@@ -184,7 +185,7 @@ export function History(): JSX.Element {
 
         <Panel title="Daily spend · last 30 days">
           <div className="h-44 min-w-0">
-            <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+            <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
               <BarChart data={dailyData}>
                 <defs>
                   <linearGradient id="costGradient" x1="0" y1="0" x2="0" y2="1">
@@ -214,7 +215,7 @@ export function History(): JSX.Element {
               className="min-w-0"
               style={{ height: `${Math.max(176, outcomeData.length * 32 + 40)}px` }}
             >
-              <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+              <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
                 <BarChart data={outcomeData} layout="vertical">
                   <CartesianGrid stroke={GRID_STROKE} strokeDasharray="3 3" />
                   <XAxis type="number" tick={TICK_STYLE} stroke={GRID_STROKE} unit="$" />
@@ -250,7 +251,7 @@ export function History(): JSX.Element {
             />
           ) : (
             <div className="h-44 min-w-0">
-              <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+              <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
                 <BarChart data={antiPatternSeries}>
                   <defs>
                     <linearGradient id="antiPatternGradient" x1="0" y1="0" x2="0" y2="1">
@@ -334,7 +335,7 @@ export function History(): JSX.Element {
               className="min-w-0"
               style={{ height: `${Math.max(176, topTools.length * 28 + 40)}px` }}
             >
-              <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+              <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
                 <BarChart data={topTools} layout="vertical">
                   <CartesianGrid stroke={GRID_STROKE} strokeDasharray="3 3" />
                   <XAxis type="number" tick={TICK_STYLE} stroke={GRID_STROKE} />
@@ -342,13 +343,18 @@ export function History(): JSX.Element {
                     type="category"
                     dataKey="tool"
                     tick={TICK_STYLE}
+                    tickFormatter={shortToolName}
                     stroke={GRID_STROKE}
                     width={120}
                   />
-                  <Tooltip contentStyle={TOOLTIP_STYLE} />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} labelFormatter={shortToolName} />
                   <Bar dataKey="count" radius={[0, 3, 3, 0]}>
                     {topTools.map((entry) => (
-                      <Cell key={entry.tool} fill={toolFillColor(entry.tool)} fillOpacity={0.8} />
+                      <Cell
+                        key={entry.tool}
+                        fill={toolFillColor(shortToolName(entry.tool))}
+                        fillOpacity={0.8}
+                      />
                     ))}
                   </Bar>
                 </BarChart>

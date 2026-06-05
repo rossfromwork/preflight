@@ -666,7 +666,10 @@ function InlineReplay({ sessionId, isLive }: { sessionId: string; isLive: boolea
                   >
                     {shortToolName(entry.toolName)}
                   </span>
-                  <span className="flex-1 truncate text-ink-subtle min-w-0">
+                  <span
+                    className="flex-1 truncate text-ink-subtle min-w-0"
+                    title={entry.filePath ?? entry.command ?? ''}
+                  >
                     {entry.filePath ?? entry.command ?? ''}
                   </span>
                   <span className="w-14 text-right tabular-nums text-ink-muted shrink-0">
