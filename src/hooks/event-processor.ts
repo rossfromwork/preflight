@@ -213,6 +213,10 @@ export class HookEventProcessor {
         ...(preEvent.inputSize !== undefined && { inputSizeBytes: preEvent.inputSize }),
         ...(event.outputSize !== undefined && { outputSizeBytes: event.outputSize }),
         ...(preEvent.inputHash !== undefined && { inputHash: preEvent.inputHash }),
+        ...(preEvent.cwd !== undefined && { cwd: preEvent.cwd as string }),
+        ...(preEvent.permissionMode !== undefined && {
+          permissionMode: preEvent.permissionMode as string,
+        }),
         ...toolFields,
       };
       this.emitRecord(record);

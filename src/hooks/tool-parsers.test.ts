@@ -293,6 +293,96 @@ describe('parseToolSpecificFields', () => {
     });
   });
 
+  describe('Edit output parser', () => {
+    it('extracts editSuccess and editMatched', () => {
+      const output = { editSuccess: true, editMatched: true };
+      const fields = parseToolSpecificFields(
+        'Edit',
+        { file_path: '/f.ts', old_string: 'a', new_string: 'b' },
+        output,
+      );
+
+      expect(fields.editSuccess).toBe(true);
+      expect(fields.editMatched).toBe(true);
+    });
+
+    it('extracts editErrorReason on failure', () => {
+      const output = { editSuccess: false, editError: 'old_string not found in file' };
+      const fields = parseToolSpecificFields('Edit', { file_path: '/f.ts' }, output);
+
+      expect(fields.editSuccess).toBe(false);
+      expect(fields.editErrorReason).toBe('old_string not found in file');
+    });
+
+    it('returns empty fields when output has no recognized keys', () => {
+      const fields = parseToolSpecificFields('Edit', { file_path: '/f.ts' }, { unrelated: 42 });
+      expect(fields.editSuccess).toBeUndefined();
+      expect(fields.editMatched).toBeUndefined();
+      expect(fields.editErrorReason).toBeUndefined();
+    });
+
+    it('returns empty fields when output is null', () => {
+      const fields = parseToolSpecificFields('Edit', { file_path: '/f.ts' }, null);
+      expect(fields.editSuccess).toBeUndefined();
+    });
+  });
+
+  describe('Grep output parser', () => {
+    it('extracts grepMatchCount from matchCount', () => {
+      const output = { grepMatchCount: 5 };
+      const fields = parseToolSpecificFields('Grep', { pattern: 'TODO' }, output);
+
+      expect(fields.grepMatchCount).toBe(5);
+    });
+
+    it('extracts grepResultLines', () => {
+      const output = { grepResultLines: 12 };
+      const fields = parseToolSpecificFields('Grep', { pattern: 'TODO' }, output);
+
+      expect(fields.grepResultLines).toBe(12);
+    });
+
+    it('returns empty fields when output has no recognized keys', () => {
+      const fields = parseToolSpecificFields('Grep', { pattern: 'x' }, { foo: 'bar' });
+      expect(fields.grepMatchCount).toBeUndefined();
+      expect(fields.grepResultLines).toBeUndefined();
+    });
+
+    it('returns empty fields when output is undefined', () => {
+      const fields = parseToolSpecificFields('Grep', { pattern: 'x' }, undefined);
+      expect(fields.grepMatchCount).toBeUndefined();
+    });
+  });
+
+  describe('Agent output parser', () => {
+    it('extracts agentCompleted', () => {
+      const output = { agentCompleted: true, agentResultLength: 500 };
+      const fields = parseToolSpecificFields('Agent', { prompt: 'Do work' }, output);
+
+      expect(fields.agentCompleted).toBe(true);
+      expect(fields.agentResultLength).toBe(500);
+    });
+
+    it('extracts agentInterrupted', () => {
+      const output = { agentInterrupted: true };
+      const fields = parseToolSpecificFields('Agent', { prompt: 'Do work' }, output);
+
+      expect(fields.agentInterrupted).toBe(true);
+    });
+
+    it('returns empty fields when output has no recognized keys', () => {
+      const fields = parseToolSpecificFields('Agent', { prompt: 'x' }, { foo: 'bar' });
+      expect(fields.agentCompleted).toBeUndefined();
+      expect(fields.agentInterrupted).toBeUndefined();
+      expect(fields.agentResultLength).toBeUndefined();
+    });
+
+    it('returns empty fields when output is null', () => {
+      const fields = parseToolSpecificFields('Agent', { prompt: 'x' }, null);
+      expect(fields.agentCompleted).toBeUndefined();
+    });
+  });
+
   describe('unknown tools', () => {
     it('returns empty record for unknown tool name', () => {
       const fields = parseToolSpecificFields('SomeNewTool', { foo: 'bar' }, undefined);

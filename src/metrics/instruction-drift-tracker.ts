@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createLogger } from '../shared/index.js';
+import type { ToolCallRecord } from '../storage/types.js';
 
 const logger = createLogger('instruction-drift');
 
@@ -74,6 +75,21 @@ export class InstructionDriftTracker {
   constructor(options?: InstructionDriftOptions) {
     this.maxRecords = options?.maxRecords ?? DEFAULT_MAX_RECORDS;
     this.minSessionsForComparison = options?.minSessionsForComparison ?? DEFAULT_MIN_SESSIONS;
+  }
+
+  recordToolCall(record: ToolCallRecord): void {
+    if (record.toolName !== 'Read') return;
+
+    const filePath = record.filePath as string | undefined;
+    if (!filePath) return;
+
+    // Only track reads of instruction files
+    if (!filePath.includes('CLAUDE.md') && !filePath.includes('.claude/')) return;
+
+    const hash = record.inputHash as string | undefined;
+    if (!hash) return;
+
+    this.setPromptHash(hash);
   }
 
   setPrompt(promptText: string): string {

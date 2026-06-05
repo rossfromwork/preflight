@@ -92,6 +92,8 @@ import type { InstructionDriftTracker } from '../metrics/instruction-drift-track
 import type { ToolSelectionScorer } from '../metrics/tool-selection-scorer.js';
 import type { QualityProxyTracker } from '../metrics/quality-proxy-tracker.js';
 import type { ApiFailureTracker } from '../metrics/api-failure-tracker.js';
+import type { TurnCostAttributor } from '../metrics/turn-cost-attributor.js';
+import type { TurnTracker } from '../metrics/turn-tracker.js';
 import {
   CONTEXT_EFFICIENCY_TOOL,
   LATENCY_PERCENTILES_TOOL,
@@ -170,6 +172,28 @@ const SESSION_TIMELINE_TOOL = {
         description: 'Number of most recent tool calls to return (default: 20)',
       },
     },
+  },
+  annotations: { readOnlyHint: true },
+};
+
+const COST_PER_TOOL_TOOL = {
+  name: 'nr_observe_get_cost_per_tool',
+  description:
+    'Cost attribution per tool type — approximate, based on turn-level token correlation. Shows which tools cost the most and average cost per call.',
+  inputSchema: {
+    type: 'object' as const,
+    properties: {},
+  },
+  annotations: { readOnlyHint: true },
+};
+
+const TURN_ANALYSIS_TOOL = {
+  name: 'nr_observe_get_turn_analysis',
+  description:
+    'Conversation turn analysis — groups tool calls by AI response, shows parallelism and turn patterns.',
+  inputSchema: {
+    type: 'object' as const,
+    properties: {},
   },
   annotations: { readOnlyHint: true },
 };
@@ -316,6 +340,8 @@ export interface ToolRegistrationOptions {
   toolCallBuffer?: { getRecords(): readonly import('../storage/types.js').ToolCallRecord[] };
   qualityProxyTracker?: QualityProxyTracker;
   apiFailureTracker?: ApiFailureTracker;
+  turnCostAttributor?: TurnCostAttributor;
+  turnTracker?: TurnTracker;
   sessionTraceId?: string;
   sessionStartMs?: number;
   accountId?: string;
@@ -386,6 +412,8 @@ export function registerTools(server: Server, options: ToolRegistrationOptions):
     toolSelectionScorer,
     qualityProxyTracker,
     apiFailureTracker,
+    turnCostAttributor,
+    turnTracker,
     sessionTraceId,
     sessionStartMs,
   } = options;
@@ -490,6 +518,12 @@ export function registerTools(server: Server, options: ToolRegistrationOptions):
   }
   if (apiFailureTracker) {
     tools.push(API_FAILURES_TOOL);
+  }
+  if (turnCostAttributor) {
+    tools.push(COST_PER_TOOL_TOOL);
+  }
+  if (turnTracker) {
+    tools.push(TURN_ANALYSIS_TOOL);
   }
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
@@ -1160,6 +1194,42 @@ export function registerTools(server: Server, options: ToolRegistrationOptions):
             };
           }
           return handleGetApiFailures(apiFailureTracker);
+        }
+
+        case 'nr_observe_get_cost_per_tool': {
+          if (!turnCostAttributor) {
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: JSON.stringify({ error: 'TurnCostAttributor not available' }),
+                },
+              ],
+              isError: true,
+            };
+          }
+          const costMetrics = turnCostAttributor.getMetrics();
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify(costMetrics, null, 2) }],
+          };
+        }
+
+        case 'nr_observe_get_turn_analysis': {
+          if (!turnTracker) {
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: JSON.stringify({ error: 'TurnTracker not available' }),
+                },
+              ],
+              isError: true,
+            };
+          }
+          const turnMetrics = turnTracker.getMetrics();
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify(turnMetrics, null, 2) }],
+          };
         }
 
         default:

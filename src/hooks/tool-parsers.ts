@@ -122,6 +122,10 @@ function parseAgent(input: Record<string, unknown>): ToolFields {
   }
   if (typeof input.run_in_background === 'boolean')
     fields.runInBackground = input.run_in_background;
+  if (typeof input.name === 'string') fields.agentName = input.name;
+  if (typeof input.team_name === 'string') fields.agentTeamName = input.team_name;
+  if (typeof input.isolation === 'string') fields.agentIsolation = input.isolation;
+  if (typeof input.model === 'string') fields.agentModel = input.model;
   return fields;
 }
 
@@ -162,6 +166,31 @@ const INPUT_PARSERS: Record<string, (input: Record<string, unknown>) => ToolFiel
   TaskUpdate: parseTaskUpdate,
 };
 
+function parseEditOutput(output: Record<string, unknown>): ToolFields {
+  const fields: ToolFields = {};
+  if (typeof output.editSuccess === 'boolean') fields.editSuccess = output.editSuccess;
+  if (typeof output.editMatched === 'boolean') fields.editMatched = output.editMatched;
+  if (typeof output.editError === 'string') fields.editErrorReason = output.editError;
+  return fields;
+}
+
+function parseGrepOutput(output: Record<string, unknown>): ToolFields {
+  const fields: ToolFields = {};
+  if (typeof output.grepMatchCount === 'number') fields.grepMatchCount = output.grepMatchCount;
+  if (typeof output.grepResultLines === 'number') fields.grepResultLines = output.grepResultLines;
+  return fields;
+}
+
+function parseAgentOutput(output: Record<string, unknown>): ToolFields {
+  const fields: ToolFields = {};
+  if (typeof output.agentCompleted === 'boolean') fields.agentCompleted = output.agentCompleted;
+  if (typeof output.agentInterrupted === 'boolean')
+    fields.agentInterrupted = output.agentInterrupted;
+  if (typeof output.agentResultLength === 'number')
+    fields.agentResultLength = output.agentResultLength;
+  return fields;
+}
+
 const OUTPUT_PARSERS: Record<string, (output: Record<string, unknown>) => ToolFields> = {
   Bash: (output) => {
     const fields: ToolFields = {};
@@ -173,6 +202,9 @@ const OUTPUT_PARSERS: Record<string, (output: Record<string, unknown>) => ToolFi
     }
     return fields;
   },
+  Edit: parseEditOutput,
+  Grep: parseGrepOutput,
+  Agent: parseAgentOutput,
 };
 
 /**

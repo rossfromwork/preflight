@@ -37,6 +37,7 @@ import {
   securityAlertToNrEvent,
 } from '../security/index.js';
 import type { AuditRecord } from '../security/index.js';
+import type { TurnCostAttributor } from '../metrics/turn-cost-attributor.js';
 import type { LocalStore } from '../storage/index.js';
 import { LogIngestManager } from './log-ingest.js';
 
@@ -103,6 +104,8 @@ export interface NrIngestOptions {
   otlpHeaders?: Record<string, string>;
   /** Transport mode: 'nr-events-api', 'otlp', or 'both'. */
   transport?: 'nr-events-api' | 'otlp' | 'both';
+  /** Turn cost attributor for enriching AiToolCall events with cost data. */
+  turnCostAttributor?: TurnCostAttributor;
 }
 
 // ---------------------------------------------------------------------------
@@ -141,6 +144,7 @@ const REDACT_FIELD_KEYS = new Set([
   'agentDescription',
   'agent_description',
   'detail',
+  'cwd',
 ]);
 
 /**
@@ -427,6 +431,7 @@ export class NrIngestManager {
   private readonly projectId: string | null | undefined;
   private readonly orgId: string | null | undefined;
   private readonly metricHarvestIntervalMs: number;
+  private readonly turnCostAttributor?: TurnCostAttributor;
   private readonly otlpTransport: OtlpTransport | null;
   private readonly otlpEventBridge: OtlpEventBridge | null;
   private sessionGaugeIntervalId: ReturnType<typeof setInterval> | null = null;
@@ -443,6 +448,7 @@ export class NrIngestManager {
     this.proxyMetrics = new ProxyMetricsTracker();
     this.costTracker = options.costTracker;
     this.efficiencyScorer = options.efficiencyScorer;
+    this.turnCostAttributor = options.turnCostAttributor;
     this.auditTrail =
       options.auditTrail ??
       new AuditTrailManager({
@@ -555,6 +561,11 @@ export class NrIngestManager {
       projectId: this.projectId,
       orgId: this.orgId,
     });
+
+    // Cost attribution is available via the nr_observe_get_cost_per_tool MCP tool only.
+    // Enriching NR events here would always produce null because the token event
+    // (which finalizes turn cost) arrives asynchronously after ingestToolCall is called.
+
     this.scheduler.addEvent(event);
 
     // Record per-call metrics for NR Metric API

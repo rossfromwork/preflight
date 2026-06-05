@@ -338,6 +338,10 @@ function extractInputMeta(toolName: string, input: unknown): Record<string, unkn
       if (typeof obj.prompt === 'string') meta.promptLength = obj.prompt.length;
       if (typeof obj.run_in_background === 'boolean')
         meta.run_in_background = obj.run_in_background;
+      if (typeof obj.name === 'string') meta.name = obj.name;
+      if (typeof obj.team_name === 'string') meta.team_name = obj.team_name;
+      if (typeof obj.isolation === 'string') meta.isolation = obj.isolation;
+      if (typeof obj.model === 'string') meta.model = obj.model;
       break;
     case 'AskUserQuestion':
       if (Array.isArray(obj.questions)) meta.questions = new Array(obj.questions.length);
@@ -371,6 +375,59 @@ function extractOutputMeta(toolName: string, output: unknown): Record<string, un
       const parsed = Number(obj.exitCode);
       if (!Number.isNaN(parsed)) return { exitCode: parsed };
     }
+  }
+
+  if (toolName === 'Edit') {
+    const meta: Record<string, unknown> = {};
+    if (typeof obj.success === 'boolean') meta.editSuccess = obj.success;
+    if (typeof obj.error === 'string') meta.editError = obj.error.slice(0, 200);
+    if (typeof obj.matched === 'boolean') meta.editMatched = obj.matched;
+    return Object.keys(meta).length > 0 ? meta : undefined;
+  }
+
+  if (toolName === 'Grep') {
+    const meta: Record<string, unknown> = {};
+    if (typeof obj.matchCount === 'number') meta.grepMatchCount = obj.matchCount;
+    else if (Array.isArray(obj.matches)) meta.grepMatchCount = obj.matches.length;
+    else if (Array.isArray(obj.results)) meta.grepMatchCount = obj.results.length;
+    if (Array.isArray(obj.content)) {
+      let lineCount = 0;
+      for (const block of obj.content) {
+        if (
+          block &&
+          typeof block === 'object' &&
+          'text' in (block as Record<string, unknown>) &&
+          typeof (block as Record<string, unknown>).text === 'string'
+        ) {
+          lineCount += ((block as Record<string, unknown>).text as string).split('\n').length;
+        }
+      }
+      if (lineCount > 0) meta.grepResultLines = lineCount;
+    }
+    return Object.keys(meta).length > 0 ? meta : undefined;
+  }
+
+  if (toolName === 'Agent') {
+    const meta: Record<string, unknown> = {};
+    if (typeof obj.completed === 'boolean') meta.agentCompleted = obj.completed;
+    if (typeof obj.interrupted === 'boolean') meta.agentInterrupted = obj.interrupted;
+    if (typeof obj.result === 'string') meta.agentResultLength = obj.result.length;
+    else if (typeof obj.message === 'string') meta.agentResultLength = obj.message.length;
+    else if (Array.isArray(obj.content)) {
+      let totalLen = 0;
+      for (const block of obj.content) {
+        if (
+          block &&
+          typeof block === 'object' &&
+          'text' in (block as Record<string, unknown>) &&
+          typeof (block as Record<string, unknown>).text === 'string'
+        ) {
+          totalLen += ((block as Record<string, unknown>).text as string).length;
+        }
+      }
+      if (totalLen > 0) meta.agentResultLength = totalLen;
+    }
+    return Object.keys(meta).length > 0 ? meta : undefined;
   }
 
   return undefined;
@@ -444,6 +501,8 @@ function processHook(raw: string): void {
   }
 
   // Attach session metadata
+  if (data.cwd) event.cwd = data.cwd;
+  if (data.permission_mode) event.permissionMode = data.permission_mode;
   if (data.session_id) event.sessionId = data.session_id;
   if (data.tool_use_id) event.toolUseId = data.tool_use_id;
 

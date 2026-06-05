@@ -40,6 +40,8 @@ import { ToolSelectionScorer } from './metrics/tool-selection-scorer.js';
 import { QualityProxyTracker } from './metrics/quality-proxy-tracker.js';
 import { ApiFailureTracker } from './metrics/api-failure-tracker.js';
 import { LiveSessionRegistry } from './metrics/live-session-registry.js';
+import { TurnCostAttributor } from './metrics/turn-cost-attributor.js';
+import { TurnTracker } from './metrics/turn-tracker.js';
 import { NrIngestManager } from './transport/nr-ingest.js';
 import { AuditTrailManager } from './security/audit-trail.js';
 import { LiveEventBus } from './dashboard/index.js';
@@ -304,13 +306,18 @@ async function main(): Promise<void> {
     const modelUsageTracker = new ModelUsageTracker();
     const retryDetector = new RetryDetector();
     const contextCompositionTracker = new ContextCompositionTracker();
-    const latencyDecompositionTracker = new LatencyDecompositionTracker();
+    // LatencyDecompositionTracker requires turn-level LLM vs tool timing that is
+    // only available in proxy mode (where we see upstream response latency). In
+    // stdio mode the data cannot be auto-populated so we skip instantiation.
+    const latencyDecompositionTracker: LatencyDecompositionTracker | undefined = undefined;
     const decisionTracker = new DecisionTracker();
     const instructionDriftTracker = new InstructionDriftTracker();
     const toolSelectionScorer = new ToolSelectionScorer();
     const qualityProxyTracker = new QualityProxyTracker();
     const apiFailureTracker = new ApiFailureTracker();
     const liveSessionRegistry = new LiveSessionRegistry();
+    const turnCostAttributor = new TurnCostAttributor();
+    const turnTracker = new TurnTracker();
 
     const toolCallBuffer: import('./storage/types.js').ToolCallRecord[] = [];
     const toolCallBufferAccessor = {
@@ -558,6 +565,7 @@ async function main(): Promise<void> {
         metricHarvestIntervalMs: config.harvestIntervalMs.metrics,
         costTracker,
         efficiencyScorer,
+        turnCostAttributor,
         sessionTraceId,
       });
       capturedNrIngest = nrIngest;
@@ -630,6 +638,15 @@ async function main(): Promise<void> {
         latencyTracker.recordToolCall(record);
         retryDetector.recordToolCall(record);
         qualityProxyTracker.recordToolCall(record);
+        const turnId = turnTracker.recordToolCall(record);
+        const turnNumber = turnTracker.getCurrentTurnNumber();
+        turnCostAttributor.recordToolCall(record, turnId);
+        decisionTracker.recordToolCall(record);
+        instructionDriftTracker.recordToolCall(record);
+
+        (record as Record<string, unknown>).turn_id = turnId;
+        (record as Record<string, unknown>).turn_number = turnNumber;
+
         toolCallBuffer.push(record);
 
         // Record audit trail unconditionally so the local dashboard's Audit view
@@ -727,6 +744,7 @@ async function main(): Promise<void> {
       },
       onTokenEvent: (tokenEvent) => {
         if (!costTracker || !config) return;
+        turnCostAttributor.recordTokenEvent(tokenEvent);
         const usage = {
           inputTokens: tokenEvent.inputTokens,
           outputTokens: tokenEvent.outputTokens,
@@ -742,6 +760,7 @@ async function main(): Promise<void> {
           tokenEvent.outputTokens,
           breakdown.totalUsd,
         );
+        contextCompositionTracker.recordTokenEvent(tokenEvent);
 
         const costMetrics = costTracker.getMetrics();
         if (costMetrics.sessionTotalCostUsd !== null) {
@@ -833,6 +852,8 @@ async function main(): Promise<void> {
         toolCallBuffer: toolCallBufferAccessor,
         qualityProxyTracker,
         apiFailureTracker,
+        turnCostAttributor,
+        turnTracker,
         sessionTraceId,
         sessionStartMs,
         accountId: config.accountId,

@@ -1,3 +1,5 @@
+import type { ToolCallRecord } from '../storage/types.js';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -44,9 +46,62 @@ export class DecisionTracker {
   private readonly reasoningMaxLength: number;
   private readonly branches: DecisionBranch[] = [];
 
+  private turnCounter = 0;
+  private lastRecordFailed = false;
+  private lastToolName: string | null = null;
+  private fileCallCounts = new Map<string, number>();
+
   constructor(options?: DecisionTrackerOptions) {
     this.maxBranches = options?.maxBranches ?? DEFAULT_MAX_BRANCHES;
     this.reasoningMaxLength = options?.reasoningMaxLength ?? DEFAULT_REASONING_MAX_LENGTH;
+  }
+
+  recordToolCall(record: ToolCallRecord): void {
+    this.turnCounter++;
+    const turn = this.turnCounter;
+
+    if (this.lastRecordFailed) {
+      // Previous tool failed — this tool call represents a recovery decision
+      this.recordDecision({
+        turnNumber: turn,
+        reasoning: `recovery after ${this.lastToolName ?? 'unknown'} failure`,
+        chosenAction: record.toolName,
+        toolName: record.toolName,
+      });
+    }
+
+    if (record.toolName === 'AskUserQuestion') {
+      this.recordDecision({
+        turnNumber: turn,
+        reasoning: 'delegating to user',
+        chosenAction: 'ask_user',
+        toolName: record.toolName,
+      });
+    }
+
+    // Detect retry decisions: same tool on same file 3+ times
+    const filePath = record.filePath as string | undefined;
+    if (filePath) {
+      const key = `${record.toolName}:${filePath}`;
+      const count = (this.fileCallCounts.get(key) ?? 0) + 1;
+      this.fileCallCounts.set(key, count);
+      if (count === 3) {
+        this.recordDecision({
+          turnNumber: turn,
+          reasoning: `retrying ${record.toolName} on ${filePath} (${count} attempts)`,
+          chosenAction: 'retry',
+          toolName: record.toolName,
+        });
+      }
+    }
+
+    // Record outcome for the most recent pending branch
+    if (this.branches.length > 0) {
+      this.recordOutcome(turn, record.success);
+    }
+
+    this.lastRecordFailed = !record.success;
+    this.lastToolName = record.toolName;
   }
 
   recordDecision(input: {
@@ -137,6 +192,10 @@ export class DecisionTracker {
 
   reset(_sessionId: string): void {
     this.branches.length = 0;
+    this.turnCounter = 0;
+    this.lastRecordFailed = false;
+    this.lastToolName = null;
+    this.fileCallCounts.clear();
   }
 
   private computeLongestFailureStreak(): number {

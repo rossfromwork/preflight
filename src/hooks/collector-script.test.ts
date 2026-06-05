@@ -160,6 +160,69 @@ describe('collector-script', () => {
       const event = readBufferEvents()[0]!;
       expect(event.toolOutput).toBeUndefined();
     });
+
+    it('extracts Edit output metadata', () => {
+      const response = { success: true, matched: true };
+      processHook(makePostToolUse({ tool_name: 'Edit', tool_response: response }));
+
+      const event = readBufferEvents()[0]!;
+      expect(event.toolOutput).toEqual({ editSuccess: true, editMatched: true });
+    });
+
+    it('extracts Edit error message truncated to 200 chars', () => {
+      const longError = 'x'.repeat(300);
+      const response = { success: false, error: longError };
+      processHook(makePostToolUse({ tool_name: 'Edit', tool_response: response }));
+
+      const event = readBufferEvents()[0]!;
+      expect(event.toolOutput).toEqual({
+        editSuccess: false,
+        editError: 'x'.repeat(200),
+      });
+    });
+
+    it('extracts Grep matchCount from results array', () => {
+      const response = { results: [{ file: 'a.ts' }, { file: 'b.ts' }, { file: 'c.ts' }] };
+      processHook(makePostToolUse({ tool_name: 'Grep', tool_response: response }));
+
+      const event = readBufferEvents()[0]!;
+      expect(event.toolOutput).toEqual({ grepMatchCount: 3 });
+    });
+
+    it('extracts Grep resultLines from content blocks', () => {
+      const response = { content: [{ type: 'text', text: 'line1\nline2\nline3' }] };
+      processHook(makePostToolUse({ tool_name: 'Grep', tool_response: response }));
+
+      const event = readBufferEvents()[0]!;
+      expect(event.toolOutput).toEqual({ grepResultLines: 3 });
+    });
+
+    it('extracts Agent completed and result length', () => {
+      const response = { completed: true, result: 'Task finished successfully' };
+      processHook(makePostToolUse({ tool_name: 'Agent', tool_response: response }));
+
+      const event = readBufferEvents()[0]!;
+      expect(event.toolOutput).toEqual({
+        agentCompleted: true,
+        agentResultLength: 'Task finished successfully'.length,
+      });
+    });
+
+    it('extracts Agent interrupted flag', () => {
+      const response = { interrupted: true };
+      processHook(makePostToolUse({ tool_name: 'Agent', tool_response: response }));
+
+      const event = readBufferEvents()[0]!;
+      expect(event.toolOutput).toEqual({ agentInterrupted: true });
+    });
+
+    it('extracts Agent resultLength from content blocks', () => {
+      const response = { content: [{ type: 'text', text: 'hello world' }] };
+      processHook(makePostToolUse({ tool_name: 'Agent', tool_response: response }));
+
+      const event = readBufferEvents()[0]!;
+      expect(event.toolOutput).toEqual({ agentResultLength: 11 });
+    });
   });
 
   describe('processHook() — PostToolUse', () => {

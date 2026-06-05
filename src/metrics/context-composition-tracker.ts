@@ -1,5 +1,6 @@
 import type { MetricAggregator } from '../shared/index.js';
 import { createLogger } from '../shared/index.js';
+import type { TokenEvent } from '../storage/types.js';
 
 const logger = createLogger('context-composition');
 
@@ -144,6 +145,28 @@ export class ContextCompositionTracker {
     this.checkDominance(now);
 
     return composition;
+  }
+
+  recordTokenEvent(event: TokenEvent): void {
+    // Approximate composition from token counts:
+    // - cacheReadTokens = previously cached context (system prompt + conversation history)
+    // - cacheCreationTokens = first-time context being cached this turn
+    // - remainder of inputTokens = new content (tool results + user input)
+    const cachedContext = event.cacheReadTokens;
+    const cacheCreation = event.cacheCreationTokens;
+    const newContent = Math.max(0, event.inputTokens - cachedContext - cacheCreation);
+    const totalInput = event.inputTokens;
+
+    if (totalInput === 0) return;
+
+    this.recordTurn({
+      systemPromptTokens: cacheCreation,
+      conversationHistoryTokens: cachedContext,
+      toolResultTokens: newContent,
+      injectedFileContentTokens: 0,
+      otherTokens: 0,
+      totalTokens: totalInput,
+    });
   }
 
   getMetrics(): ContextCompositionMetrics {
