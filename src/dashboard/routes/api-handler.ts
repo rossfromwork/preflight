@@ -8,6 +8,95 @@ import { getIsoWeekId } from '../../storage/weekly-summary.js';
 import { analyzeReplayTimeline } from './replay-analyzer.js';
 import type { ReplayTimelineEntry, ToolCallRecord } from '../../storage/types.js';
 
+// ---------------------------------------------------------------------------
+// Aggregate quality-proxy metrics from today's persisted sessions so the
+// panel isn't empty on page refresh (when the live tracker has no signals).
+// ---------------------------------------------------------------------------
+
+interface HistoricalSession {
+  readonly toolBreakdown?: Record<string, number>;
+  readonly testRunCount?: number;
+  readonly testPassCount?: number;
+  readonly timeline?: readonly ReplayTimelineEntry[];
+}
+
+function aggregateQualityFromHistory(sessions: unknown[]): {
+  totalSignals: number;
+  diffApplyRate: number | null;
+  testPassRate: number | null;
+  backtrackCount: number;
+  selfCorrectionCount: number;
+  qualityByTurnBucket: never[];
+  degradationDetected: boolean;
+  events: never[];
+} {
+  let diffApplied = 0;
+  let diffFailed = 0;
+  let testPass = 0;
+  let testFail = 0;
+  let backtrackCount = 0;
+  let selfCorrectionCount = 0;
+
+  for (const raw of sessions) {
+    const session = raw as HistoricalSession;
+    const editCount = (session.toolBreakdown?.['Edit'] ?? 0) + (session.toolBreakdown?.['Write'] ?? 0);
+    const testRuns = session.testRunCount ?? 0;
+    const testPasses = session.testPassCount ?? 0;
+
+    // Derive diff success/failure from timeline when available
+    if (session.timeline && session.timeline.length > 0) {
+      let lastEditFile: string | null = null;
+      let lastEditIdx = -1;
+      for (let i = 0; i < session.timeline.length; i++) {
+        const entry = session.timeline[i]!;
+        if (entry.toolName === 'Edit' || entry.toolName === 'Write') {
+          if (entry.success) diffApplied++;
+          else diffFailed++;
+
+          // Detect self-correction: re-edit same file within 3 turns after a test failure
+          if (lastEditFile && entry.filePath === lastEditFile && i - lastEditIdx <= 3) {
+            const recentFail = session.timeline.slice(lastEditIdx + 1, i).some(
+              (e) => e.isTestCommand && !e.success,
+            );
+            if (recentFail) selfCorrectionCount++;
+          }
+
+          lastEditFile = entry.filePath ?? null;
+          lastEditIdx = i;
+        }
+        // Detect backtrack: Read of a recently edited file
+        if (entry.toolName === 'Read' && lastEditFile && entry.filePath === lastEditFile && i - lastEditIdx <= 2) {
+          backtrackCount++;
+        }
+        if (entry.isTestCommand) {
+          if (entry.success) testPass++;
+          else testFail++;
+        }
+      }
+    } else {
+      // No timeline — use summary counts
+      diffApplied += editCount;
+      testPass += testPasses;
+      testFail += Math.max(0, testRuns - testPasses);
+    }
+  }
+
+  const totalDiffs = diffApplied + diffFailed;
+  const totalTests = testPass + testFail;
+  const totalSignals = totalDiffs + totalTests + backtrackCount + selfCorrectionCount;
+
+  return {
+    totalSignals,
+    diffApplyRate: totalDiffs > 0 ? Math.round((diffApplied / totalDiffs) * 1000) / 1000 : null,
+    testPassRate: totalTests > 0 ? Math.round((testPass / totalTests) * 1000) / 1000 : null,
+    backtrackCount,
+    selfCorrectionCount,
+    qualityByTurnBucket: [],
+    degradationDetected: false,
+    events: [],
+  };
+}
+
 interface RawAuditRecord {
   readonly timestamp: number;
   readonly sessionId: string | null;
@@ -365,7 +454,12 @@ export function createApiHandler(
 
   routes.set('GET /api/quality-proxy', (_req, res) => {
     if (!deps.qualityProxyTracker) return unavailable(res, 'qualityProxyTracker');
-    jsonOk(res, deps.qualityProxyTracker.getMetrics());
+    const live = deps.qualityProxyTracker.getMetrics() as { totalSignals: number };
+    if (live.totalSignals > 0 || !deps.sessionStore) {
+      jsonOk(res, live);
+      return;
+    }
+    jsonOk(res, aggregateQualityFromHistory(deps.sessionStore.loadTodaySessions()));
   });
 
   routes.set('GET /api/tool-selection-score', (_req, res) => {
