@@ -300,6 +300,7 @@ export function handleGetSessionHistory(
 
   const result = limited.map((s) => ({
     session_id: s.sessionId,
+    session_name: s.sessionName ?? null,
     developer: s.developer,
     start_time: new Date(s.startTime).toISOString(),
     duration_ms: s.durationMs,

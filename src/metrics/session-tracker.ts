@@ -7,6 +7,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { basename } from 'node:path';
 import type { MetricAggregator } from '../shared/index.js';
 import type { ToolCallRecord } from '../storage/types.js';
 import { computePercentile } from './percentile.js';
@@ -32,6 +33,7 @@ export interface TimelineEntry {
 
 export interface SessionMetrics {
   sessionId: string;
+  sessionName: string | null;
   sessionStartTime: number;
   sessionDurationMs: number;
   toolCallCount: number;
@@ -88,6 +90,7 @@ export function computeDurationStats(durations: number[]): DurationStats {
 
 export class SessionTracker {
   private sessionId: string;
+  private sessionName: string | null = null;
   private sessionStartTime: number;
 
   private toolCallCount = 0;
@@ -112,6 +115,15 @@ export class SessionTracker {
 
   recordToolCall(record: ToolCallRecord): void {
     this.toolCallCount++;
+
+    // Derive session name from the first cwd seen; reject degenerate names
+    // like '.' or '..' that basename returns for relative directory references.
+    if (this.sessionName === null && typeof record.cwd === 'string' && record.cwd.length > 0) {
+      const name = basename(record.cwd);
+      if (name.length > 0 && name !== '.' && name !== '..') {
+        this.sessionName = name;
+      }
+    }
 
     // Per-tool count
     const tool = record.toolName;
@@ -211,6 +223,7 @@ export class SessionTracker {
 
     return {
       sessionId: this.sessionId,
+      sessionName: this.sessionName,
       sessionStartTime: this.sessionStartTime,
       sessionDurationMs: Date.now() - this.sessionStartTime,
       toolCallCount: this.toolCallCount,
@@ -254,6 +267,7 @@ export class SessionTracker {
 
   reset(sessionId?: string): void {
     this.sessionId = sessionId ?? randomUUID();
+    this.sessionName = null;
     this.sessionStartTime = Date.now();
     this.toolCallCount = 0;
     this.toolErrorCount = 0;

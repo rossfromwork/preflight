@@ -30,6 +30,7 @@ const logger = createLogger('session-store');
 // ---------------------------------------------------------------------------
 
 export interface FullSessionSummary extends SessionSummary {
+  readonly sessionName: string | null;
   readonly model: string | null;
   readonly toolBreakdown: Record<string, number>;
   readonly filesRead: string[];
@@ -308,6 +309,7 @@ export function buildSessionSummary(sources: BuildSessionSummarySources): FullSe
 
   return {
     sessionId: sessionMetrics.sessionId,
+    sessionName: sessionMetrics.sessionName,
     startTime: sessionMetrics.sessionStartTime,
     endTime: now,
     durationMs: sessionMetrics.sessionDurationMs,
@@ -387,6 +389,7 @@ function deserializeSession(raw: string): FullSessionSummary | null {
 
   return {
     sessionId: typeof obj.sessionId === 'string' ? obj.sessionId : '',
+    sessionName: typeof obj.sessionName === 'string' ? obj.sessionName : null,
     startTime: typeof obj.startTime === 'number' ? obj.startTime : 0,
     endTime: typeof obj.endTime === 'number' ? obj.endTime : 0,
     durationMs: typeof obj.durationMs === 'number' ? obj.durationMs : 0,

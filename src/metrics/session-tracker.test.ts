@@ -294,6 +294,36 @@ describe('SessionTracker', () => {
     });
   });
 
+  describe('sessionName', () => {
+    it('is null when no tool calls have a cwd', () => {
+      const tracker = new SessionTracker('test-session');
+      tracker.recordToolCall(makeRecord());
+      expect(tracker.getMetrics().sessionName).toBeNull();
+    });
+
+    it('derives from basename of the first cwd seen', () => {
+      const tracker = new SessionTracker('test-session');
+      tracker.recordToolCall(makeRecord({ cwd: '/Users/dev/projects/my-app' }));
+      expect(tracker.getMetrics().sessionName).toBe('my-app');
+    });
+
+    it('does not change after the first cwd is captured', () => {
+      const tracker = new SessionTracker('test-session');
+      tracker.recordToolCall(makeRecord({ cwd: '/home/user/first-project' }));
+      tracker.recordToolCall(makeRecord({ cwd: '/home/user/second-project' }));
+      expect(tracker.getMetrics().sessionName).toBe('first-project');
+    });
+
+    it('is cleared on reset()', () => {
+      const tracker = new SessionTracker('test-session');
+      tracker.recordToolCall(makeRecord({ cwd: '/home/user/my-project' }));
+      expect(tracker.getMetrics().sessionName).toBe('my-project');
+
+      tracker.reset('new-session');
+      expect(tracker.getMetrics().sessionName).toBeNull();
+    });
+  });
+
   describe('reset()', () => {
     it('clears all counters back to initial state', () => {
       const tracker = new SessionTracker('old-session');

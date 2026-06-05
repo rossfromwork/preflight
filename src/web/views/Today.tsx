@@ -65,6 +65,7 @@ interface SessionAntiPattern {
 
 interface SessionSummary {
   readonly sessionId: string;
+  readonly sessionName?: string | null;
   readonly startTime?: number;
   readonly toolCallCount?: number;
   readonly estimatedCostUsd?: number | null;
@@ -515,7 +516,9 @@ function LiveSessionPane({ sessions }: { sessions: SessionSummary[] }): JSX.Elem
               }
             >
               <div className="flex items-center gap-1.5">
-                <span className="font-mono text-ink-base">{s.sessionId.slice(0, 8)}</span>
+                <span className="font-mono text-ink-base">
+                  {s.sessionName || s.sessionId.slice(0, 8)}
+                </span>
                 {isSessionLive ? (
                   <span className="inline-flex items-center gap-0.5 bg-accent-cyan/20 text-accent-cyan text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded">
                     <span className="w-1.5 h-1.5 rounded-full bg-accent-cyan animate-pulse" />

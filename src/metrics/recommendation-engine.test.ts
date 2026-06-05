@@ -36,6 +36,7 @@ function makeSummary(overrides?: Partial<FullSessionSummary>): FullSessionSummar
   const now = Date.now();
   return {
     sessionId: `sess-${now}-${Math.random().toString(36).slice(2)}`,
+    sessionName: null,
     startTime: now - 60_000,
     endTime: now,
     durationMs: 60_000,

@@ -26,6 +26,7 @@ const SESSIONS_PAGE_SIZE = 50;
 
 interface SessionRow {
   readonly sessionId: string;
+  readonly sessionName?: string | null;
   readonly startTime?: string | number;
   readonly toolCallCount?: number;
   readonly estimatedCostUsd?: number | null;
@@ -51,6 +52,7 @@ interface TimelineEntry {
 
 interface SessionDetail {
   readonly sessionId: string;
+  readonly sessionName?: string | null;
   readonly toolCallCount?: number;
   readonly durationMs?: number;
   readonly estimatedCostUsd?: number | null;
@@ -237,7 +239,9 @@ export function Sessions(): JSX.Element {
               >
                 <div className="flex justify-between items-center">
                   <span className="flex items-center gap-1.5">
-                    <span className="font-mono text-ink-base">{r.sessionId.slice(0, 8)}</span>
+                    <span className="font-mono text-ink-base">
+                      {r.sessionName || r.sessionId.slice(0, 8)}
+                    </span>
                     {isLive && (
                       <span className="inline-flex items-center gap-0.5 bg-accent-cyan/20 text-accent-cyan text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded">
                         <span className="w-1.5 h-1.5 rounded-full bg-accent-cyan animate-pulse" />
@@ -335,7 +339,7 @@ function SessionTimeline({ data, isLive }: { data: SessionDetail; isLive: boolea
       <div className="flex items-baseline justify-between mb-3">
         <div>
           <h2 className="text-xs uppercase tracking-wider text-ink-muted flex items-center gap-2">
-            {data.sessionId.slice(0, 8)} · {totalCalls} calls
+            {data.sessionName || data.sessionId.slice(0, 8)} · {totalCalls} calls
             {durationSec !== null && ` · ${durationSec}s`}
             {isLive && (
               <span className="inline-flex items-center gap-0.5 bg-accent-cyan/20 text-accent-cyan text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded">

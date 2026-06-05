@@ -703,7 +703,9 @@ async function main(): Promise<void> {
 
         sessionTracker.recordToolCall(record);
         taskDetector.recordToolCall(record);
-        if (record.sessionId) liveSessionRegistry.touch(record.sessionId);
+        if (record.sessionId) {
+          liveSessionRegistry.touch(record.sessionId, record.cwd as string | undefined);
+        }
 
         if (config.transport !== 'nr-events-api' && taskSpanTracker && sessionSpan) {
           // Emit tool call span — parent is the active task span (or session span if no task)

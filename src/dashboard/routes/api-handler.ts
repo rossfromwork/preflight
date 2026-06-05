@@ -146,6 +146,7 @@ function toAuditEntry(entry: unknown): AuditEntryDto {
 
 interface LiveSessionMetrics {
   readonly sessionId: string;
+  readonly sessionName: string | null;
   readonly sessionStartTime: number;
   readonly sessionDurationMs: number;
   readonly toolCallCount: number;
@@ -196,7 +197,10 @@ export interface ApiHandlerDeps {
   readonly toolSelectionScorer?: { scoreSession: (calls: readonly ToolCallRecord[]) => unknown };
   readonly modelUsageTracker?: { getMetrics: () => unknown };
   readonly toolCallBuffer?: { getRecords: () => readonly ToolCallRecord[] };
-  readonly liveSessionRegistry?: { getLiveSessions: () => string[] };
+  readonly liveSessionRegistry?: {
+    getLiveSessions: () => string[];
+    getSessionName: (sessionId: string) => string | null;
+  };
 }
 
 type RouteFn = (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
@@ -323,6 +327,7 @@ export function createApiHandler(
       if (!alreadyPersisted && live.toolCallCount > 0) {
         sliced.push({
           sessionId: live.sessionId,
+          sessionName: live.sessionName ?? null,
           startTime: live.sessionStartTime,
           durationMs: live.sessionDurationMs,
           toolCallCount: live.toolCallCount,
@@ -356,6 +361,7 @@ export function createApiHandler(
           const stats = perSession.get(id);
           sliced.push({
             sessionId: id,
+            sessionName: deps.liveSessionRegistry.getSessionName(id),
             startTime: stats?.firstTs ?? Date.now(),
             durationMs: stats ? stats.lastTs - stats.firstTs : 0,
             toolCallCount: stats?.count ?? 0,
@@ -524,6 +530,7 @@ export function createApiHandler(
             : [];
           jsonOk(res, {
             sessionId: live.sessionId,
+            sessionName: live.sessionName ?? null,
             startTime: live.sessionStartTime,
             durationMs: live.sessionDurationMs,
             toolCallCount: live.toolCallCount,
@@ -570,6 +577,7 @@ export function createApiHandler(
         const lastTs = timeline.length > 0 ? timeline[timeline.length - 1]!.timestamp : startTime;
         jsonOk(res, {
           sessionId,
+          sessionName: deps.liveSessionRegistry.getSessionName(sessionId),
           startTime,
           durationMs: lastTs - startTime,
           toolCallCount: records.length,

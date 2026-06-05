@@ -32,6 +32,7 @@ function makeSummary(overrides?: Partial<FullSessionSummary>): FullSessionSummar
   const now = Date.now();
   return {
     sessionId: `sess-${now}`,
+    sessionName: 'my-project',
     startTime: now - 60_000,
     endTime: now,
     durationMs: 60_000,

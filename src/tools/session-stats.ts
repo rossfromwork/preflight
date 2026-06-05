@@ -219,6 +219,7 @@ export function handleGetSessionStats(sessionTracker: SessionTracker, sessionTra
   const stats = {
     session_trace_id: sessionTraceId ?? null,
     session_id: metrics.sessionId,
+    session_name: metrics.sessionName ?? null,
     session_duration_ms: metrics.sessionDurationMs,
     tool_calls: metrics.toolCallCount,
     tool_calls_by_type: metrics.toolCallCountByTool,
