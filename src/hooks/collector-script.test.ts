@@ -637,6 +637,125 @@ describe('collector-script', () => {
       }
     });
 
+    it('readLastAssistantUsage skips synthetic assistant entries and walks back to a real one', () => {
+      const transcriptPath = resolve(tmpDir, 'with-synthetic.jsonl');
+      const lines = [
+        JSON.stringify({
+          type: 'assistant',
+          message: {
+            model: 'claude-opus-4-7',
+            usage: { input_tokens: 100, output_tokens: 50 },
+          },
+        }),
+        // Synthetic entry — Claude Code internal injection. Has usage but
+        // a fake model. Should be skipped so we keep the real model.
+        JSON.stringify({
+          type: 'assistant',
+          message: {
+            model: '<synthetic>',
+            usage: { input_tokens: 1, output_tokens: 1 },
+          },
+        }),
+      ];
+      writeFileSync(transcriptPath, lines.join('\n') + '\n');
+
+      const usage = readLastAssistantUsage(transcriptPath);
+      expect(usage?.model).toBe('claude-opus-4-7');
+      expect(usage?.input_tokens).toBe(100);
+    });
+
+    it('readLastAssistantUsage extracts the model from the assistant entry', () => {
+      const transcriptPath = resolve(tmpDir, 'with-model.jsonl');
+      const lines = [
+        JSON.stringify({
+          type: 'assistant',
+          message: {
+            model: 'claude-opus-4-7',
+            usage: { input_tokens: 100, output_tokens: 50 },
+          },
+        }),
+      ];
+      writeFileSync(transcriptPath, lines.join('\n') + '\n');
+
+      const usage = readLastAssistantUsage(transcriptPath);
+      expect(usage?.model).toBe('claude-opus-4-7');
+      expect(usage?.input_tokens).toBe(100);
+    });
+
+    it('collectTranscriptTokens uses the model from the transcript when present', () => {
+      const sessionId = 'test-session-model';
+      const projectDir = tmpDir.replace(/\//g, '-');
+      const claudeHome = resolve(tmpDir, 'claude-home-model');
+      const claudeDir = resolve(claudeHome, 'projects', projectDir);
+      mkdirSync(claudeDir, { recursive: true });
+
+      const transcriptPath = resolve(claudeDir, `${sessionId}.jsonl`);
+      const transcriptLine = JSON.stringify({
+        type: 'assistant',
+        message: {
+          model: 'claude-opus-4-7',
+          usage: { input_tokens: 200, output_tokens: 40 },
+        },
+      });
+      writeFileSync(transcriptPath, transcriptLine + '\n');
+
+      process.env.NR_AI_OBSERVE_CLAUDE_HOME = claudeHome;
+
+      try {
+        collectTranscriptTokens({ cwd: tmpDir, session_id: sessionId });
+
+        const events = readBufferEvents();
+        const tokenEvents = events.filter((e) => e.mode === 'token');
+        expect(tokenEvents).toHaveLength(1);
+        expect(tokenEvents[0].model).toBe('claude-opus-4-7');
+      } finally {
+        delete process.env.NR_AI_OBSERVE_CLAUDE_HOME;
+      }
+    });
+
+    it('collectTranscriptTokens uses transcript_path from hook payload over cwd-derived path', () => {
+      // Simulates a git worktree: cwd points at the worktree dir, but the real
+      // transcript lives under the parent project's dashed directory. The hook
+      // payload provides transcript_path directly, which must win.
+      const sessionId = 'test-session-worktree';
+      const claudeHome = resolve(tmpDir, 'claude-home-worktree');
+      const realTranscriptDir = resolve(claudeHome, 'projects', 'real-parent-project');
+      mkdirSync(realTranscriptDir, { recursive: true });
+
+      const realTranscriptPath = resolve(realTranscriptDir, `${sessionId}.jsonl`);
+      writeFileSync(
+        realTranscriptPath,
+        JSON.stringify({
+          type: 'assistant',
+          message: {
+            model: 'claude-opus-4-7',
+            usage: { input_tokens: 75, output_tokens: 25 },
+          },
+        }) + '\n',
+      );
+
+      // cwd would derive a path that does NOT exist on disk
+      const fakeWorktreeCwd = resolve(tmpDir, 'some-worktree-path');
+
+      process.env.NR_AI_OBSERVE_CLAUDE_HOME = claudeHome;
+
+      try {
+        collectTranscriptTokens({
+          cwd: fakeWorktreeCwd,
+          session_id: sessionId,
+          transcript_path: realTranscriptPath,
+        });
+
+        const events = readBufferEvents();
+        const tokenEvents = events.filter((e) => e.mode === 'token');
+        expect(tokenEvents).toHaveLength(1);
+        expect(tokenEvents[0].model).toBe('claude-opus-4-7');
+        expect(tokenEvents[0].inputTokens).toBe(75);
+      } finally {
+        delete process.env.NR_AI_OBSERVE_CLAUDE_HOME;
+      }
+    });
+
     it('collectTranscriptTokens deduplicates when transcript size has not changed', () => {
       const sessionId = 'test-session-dedup';
       const projectDir = tmpDir.replace(/\//g, '-');

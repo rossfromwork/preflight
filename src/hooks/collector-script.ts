@@ -132,6 +132,7 @@ interface TranscriptUsage {
   cache_creation_input_tokens?: number;
   cache_read_input_tokens?: number;
   output_tokens?: number;
+  model?: string;
 }
 
 function getClaudeHome(): string {
@@ -163,8 +164,16 @@ function readLastAssistantUsage(transcriptPath: string): TranscriptUsage | null 
           const entry = JSON.parse(lines[i]) as Record<string, unknown>;
           if (entry.type === 'assistant' && entry.message && typeof entry.message === 'object') {
             const msg = entry.message as Record<string, unknown>;
+            // Skip synthetic entries (Claude Code's internal injections —
+            // compaction summaries, system messages). They carry model:
+            // '<synthetic>' which doesn't match any pricing table entry.
+            if (msg.model === '<synthetic>') continue;
             if (msg.usage && typeof msg.usage === 'object') {
-              return msg.usage as TranscriptUsage;
+              const usage = { ...(msg.usage as TranscriptUsage) };
+              if (typeof msg.model === 'string' && msg.model.length > 0) {
+                usage.model = msg.model;
+              }
+              return usage;
             }
           }
         } catch {
@@ -206,9 +215,19 @@ function setLastTranscriptSize(sessionId: string, size: number): void {
   }
 }
 
-function collectTranscriptTokens(data: { cwd?: string; session_id?: string }): void {
+function collectTranscriptTokens(data: {
+  cwd?: string;
+  session_id?: string;
+  transcript_path?: string;
+}): void {
   const sessionId = data.session_id;
-  const transcriptPath = getTranscriptPath(data.cwd as string | undefined, sessionId);
+  // Prefer Claude Code's own transcript_path field — it's authoritative and
+  // works under git worktrees, where deriving the path from cwd produces a
+  // dashed directory that doesn't match the parent project's transcript dir.
+  const transcriptPath =
+    typeof data.transcript_path === 'string' && data.transcript_path.length > 0
+      ? data.transcript_path
+      : getTranscriptPath(data.cwd, sessionId);
   if (!transcriptPath || !sessionId) return;
 
   let currentSize: number;
@@ -237,7 +256,7 @@ function collectTranscriptTokens(data: { cwd?: string; session_id?: string }): v
     outputTokens,
     cacheReadTokens: usage.cache_read_input_tokens ?? 0,
     cacheCreationTokens: usage.cache_creation_input_tokens ?? 0,
-    model: DEFAULT_MODEL,
+    model: usage.model ?? DEFAULT_MODEL,
   };
   tokenEvent.sessionId = sessionId;
 
@@ -275,6 +294,8 @@ interface HookInput {
   tool_response?: unknown;
   tool_use_id?: string;
   session_id?: string;
+  cwd?: string;
+  transcript_path?: string;
   error?: string;
   is_interrupt?: boolean;
   [key: string]: unknown;

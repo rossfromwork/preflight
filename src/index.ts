@@ -675,10 +675,13 @@ async function main(): Promise<void> {
         // to avoid double-counting with explicit nr_observe_report_tokens calls.
         const estimateBytes = (record.inputSizeBytes ?? 0) + (record.outputSizeBytes ?? 0);
         if (estimateBytes > 0 && costTracker.getMetrics().reportCount === 0) {
+          // Prefer a model already learned from real token events over the config
+          // default (which is just a guess). Falls back to config.model on cold start.
+          const estimateModel = costTracker.getMetrics().model ?? config.model;
           costTracker.recordEstimatedTokens(
             record.inputSizeBytes ?? 0,
             record.outputSizeBytes ?? 0,
-            config.model,
+            estimateModel,
           );
         }
 
