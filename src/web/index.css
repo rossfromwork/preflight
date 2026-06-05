@@ -1,17 +1,30 @@
 @import 'tailwindcss';
 
 @theme {
-  --color-bg-base: #0b1120;
-  --color-bg-panel: #0f172a;
-  --color-bg-line: #1e293b;
-  --color-ink-base: #e2e8f0;
-  --color-ink-subtle: #94a3b8;
-  --color-ink-muted: #64748b;
-  --color-accent-cyan: #22d3ee;
-  --color-accent-green: #22c55e;
-  --color-accent-amber: #f59e0b;
-  --color-accent-red: #f87171;
+  /* Backgrounds — near-black charcoal (NR marketing site) */
+  --color-bg-deep: #07090d;
+  --color-bg-base: #0d1117;
+  --color-bg-panel: #161b22;
+  --color-bg-elevated: #1c2129;
+  --color-bg-line: #ffffff14;
 
+  /* Text — high contrast white + muted gray-blue */
+  --color-ink-base: #ffffff;
+  --color-ink-subtle: #8e9bae;
+  --color-ink-muted: #4d5969;
+
+  /* NR Signature Palette */
+  --color-accent-green: #1ce783;
+  --color-accent-purple: #9945ff;
+  --color-accent-blue: #0095ff;
+  --color-accent-teal: #00d4aa;
+  --color-accent-amber: #ffb224;
+  --color-accent-red: #ff4c4c;
+
+  /* Legacy alias for existing cyan usages → map to NR green */
+  --color-accent-cyan: #1ce783;
+
+  /* Fonts */
   --font-sans: 'Inter', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', 'SF Mono', monospace;
 }
@@ -22,5 +35,201 @@ body,
   height: 100%;
 }
 body {
-  @apply bg-bg-base text-ink-base font-sans;
+  @apply bg-bg-deep text-ink-base font-sans;
+}
+
+/* NR Marketing Site - Glass card treatment */
+.glass-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  backdrop-filter: blur(12px);
+}
+
+.glass-card:not(.glass-card-static):hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+/* Gradient text (NR green → white) */
+.gradient-text {
+  background: linear-gradient(135deg, #1ce783 0%, #ffffff 80%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Glow effects */
+.glow-green {
+  box-shadow: 0 0 40px rgba(28, 231, 131, 0.15);
+}
+
+.glow-purple {
+  box-shadow: 0 0 40px rgba(153, 69, 255, 0.12);
+}
+
+/* Gradient mesh background orbs */
+.mesh-bg {
+  position: relative;
+}
+
+.mesh-bg::before,
+.mesh-bg::after {
+  content: '';
+  position: fixed;
+  pointer-events: none;
+  border-radius: 50%;
+}
+
+.mesh-bg::before {
+  top: -15%;
+  right: -5%;
+  width: 600px;
+  height: 600px;
+  background: radial-gradient(circle, rgba(28, 231, 131, 0.07) 0%, transparent 70%);
+  animation: drift 20s ease-in-out infinite alternate;
+}
+
+.mesh-bg::after {
+  bottom: -15%;
+  left: -5%;
+  width: 500px;
+  height: 500px;
+  background: radial-gradient(circle, rgba(153, 69, 255, 0.05) 0%, transparent 70%);
+  animation: drift 25s ease-in-out infinite alternate-reverse;
+}
+
+@keyframes drift {
+  from {
+    transform: translate(0, 0);
+  }
+  to {
+    transform: translate(30px, 20px);
+  }
+}
+
+/* Phase 2: Motion */
+@keyframes sparkline-draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes sparkline-fill {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-sparkline-draw {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: sparkline-draw 1.2s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.animate-sparkline-fill {
+  opacity: 0;
+  animation: sparkline-fill 0.6s ease-out 0.8s forwards;
+}
+
+.animate-card-enter {
+  animation: card-enter 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-card-enter,
+  .animate-sparkline-draw,
+  .animate-sparkline-fill {
+    animation: none !important;
+    opacity: 1;
+    transform: none;
+    stroke-dashoffset: 0;
+  }
+}
+
+/* Phase 3: Gantt timeline */
+@keyframes gantt-bar-enter {
+  from {
+    transform: scaleX(0);
+    opacity: 0;
+  }
+  to {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+}
+
+.gantt-bar {
+  transform-origin: left center;
+  animation: gantt-bar-enter 0.15s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gantt-bar {
+    animation: none !important;
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Phase 3: Empty state radar */
+@keyframes radar-sweep {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-radar-sweep {
+  animation: radar-sweep 3s linear infinite;
+  transform-origin: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-radar-sweep {
+    animation: none !important;
+  }
+}
+
+/* Phase 3: Shortcut overlay */
+@keyframes overlay-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-overlay-enter {
+  animation: overlay-enter 0.2s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-overlay-enter {
+    animation: none !important;
+    opacity: 1;
+    transform: none;
+  }
 }

@@ -27,7 +27,12 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     proxy: {
-      '/api': 'http://127.0.0.1:7777',
+      '/api': {
+        target: 'http://127.0.0.1:7777',
+        bypass(req) {
+          if (req.url?.match(/\.(ts|tsx|js|map)(\?|$)/)) return req.url;
+        },
+      },
       '/sse': { target: 'http://127.0.0.1:7777', changeOrigin: false, ws: false },
     },
   },

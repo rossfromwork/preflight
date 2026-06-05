@@ -1,5 +1,15 @@
-import { useState, useMemo, useRef, useEffect } from 'react';
+import {
+  useState,
+  useMemo,
+  useRef,
+  useEffect,
+  useCallback,
+  forwardRef,
+  type ReactNode,
+} from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { EmptyState } from '../components/EmptyState';
+import { GanttTimeline } from '../components/GanttTimeline';
 import {
   fetchSessionsList,
   fetchSessionCurrent,
@@ -25,6 +35,7 @@ interface CurrentSession {
   readonly sessionId: string;
   readonly sessionStartTime?: number;
   readonly toolCallCount?: number;
+  readonly estimatedCostUsd?: number | null;
   readonly liveSessions?: string[];
 }
 
@@ -134,7 +145,8 @@ function sortSessions(rows: SessionRow[], key: SortKey): SessionRow[] {
 }
 
 export function Sessions(): JSX.Element {
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const initialId = new URLSearchParams(window.location.search).get('id');
+  const [selectedId, setSelectedId] = useState<string | null>(initialId);
   const [sortKey, setSortKey] = useState<SortKey>('date');
 
   const list = useQuery<SessionRow[]>({
@@ -168,20 +180,30 @@ export function Sessions(): JSX.Element {
     return sortSessions(persisted, sortKey);
   }, [list.data, sortKey]);
 
+  useEffect(() => {
+    if (selectedId) return;
+    const firstLiveId = liveSessionIds.size > 0 ? [...liveSessionIds][0]! : null;
+    if (firstLiveId) {
+      setSelectedId(firstLiveId);
+    } else if (rows.length > 0) {
+      setSelectedId(rows[0]!.sessionId);
+    }
+  }, [liveSessionIds, rows, selectedId]);
+
   const handleSessionClick = (sessionId: string): void => {
     setSelectedId(sessionId);
   };
 
   return (
     <section className="grid grid-cols-[260px_1fr] gap-3 h-full">
-      <aside className="bg-bg-panel border border-bg-line rounded overflow-hidden flex flex-col">
-        <header className="p-2 border-b border-bg-line">
+      <aside className="glass-card overflow-hidden flex flex-col">
+        <header className="p-2 border-b border-[rgba(255,255,255,0.06)]">
           <div className="flex items-center justify-between">
             <h2 className="text-xs uppercase tracking-wider text-ink-muted">Sessions</h2>
             <select
               value={sortKey}
               onChange={(e) => setSortKey(e.target.value as SortKey)}
-              className="text-[10px] bg-bg-base border border-bg-line rounded px-1.5 py-0.5 text-ink-subtle"
+              className="text-[10px] bg-[rgba(255,255,255,0.05)] border border-[rgba(255,255,255,0.1)] rounded px-1.5 py-0.5 text-ink-subtle"
             >
               <option value="date">Newest</option>
               <option value="cost">Cost</option>
@@ -192,9 +214,11 @@ export function Sessions(): JSX.Element {
         <div className="overflow-auto">
           {list.isLoading && <div className="p-3 text-ink-muted text-xs">Loading…</div>}
           {!list.isLoading && rows.length === 0 && liveSessionIds.size === 0 && (
-            <div className="p-3 text-ink-muted text-xs">
-              No sessions yet — start coding with Claude.
-            </div>
+            <EmptyState
+              icon="code"
+              title="No sessions yet"
+              subtitle="Start coding with Claude to see your sessions here."
+            />
           )}
           {rows.map((r) => {
             const isLive = liveSessionIds.has(r.sessionId);
@@ -204,7 +228,7 @@ export function Sessions(): JSX.Element {
                 type="button"
                 onClick={() => handleSessionClick(r.sessionId)}
                 className={
-                  'block w-full text-left p-2 border-b border-bg-line text-xs hover:bg-bg-line ' +
+                  'block w-full text-left p-2 border-b border-[rgba(255,255,255,0.06)] text-xs hover:bg-bg-line ' +
                   (selectedId === r.sessionId ? 'bg-bg-line' : '')
                 }
               >
@@ -235,15 +259,21 @@ export function Sessions(): JSX.Element {
               `qk.sessionsList(50)` query above; bump both together if the
               cap ever changes. */}
           {rows.length >= SESSIONS_PAGE_SIZE && (
-            <div className="p-2 text-[10px] text-ink-muted text-center border-t border-bg-line">
+            <div className="p-2 text-[10px] text-ink-muted text-center border-t border-[rgba(255,255,255,0.06)]">
               Showing {SESSIONS_PAGE_SIZE} most recent sessions.
             </div>
           )}
         </div>
       </aside>
 
-      <div className="bg-bg-panel border border-bg-line rounded p-3 overflow-auto">
-        {!selectedId && <div className="text-ink-muted text-xs">Pick a session on the left.</div>}
+      <div className="glass-card glass-card-static p-4 overflow-auto">
+        {!selectedId && (
+          <EmptyState
+            icon="timeline"
+            title="Loading sessions"
+            subtitle="Selecting the most recent session…"
+          />
+        )}
         {selectedId && detail.isLoading && (
           <div className="text-ink-muted text-xs">Loading detail…</div>
         )}
@@ -271,6 +301,14 @@ function toolScoreColor(score: number): string {
   return 'text-red-400';
 }
 
+function toolBarColor(toolName: string): string {
+  if (toolName === 'Read') return 'bg-accent-blue/80';
+  if (toolName === 'Edit' || toolName === 'Write') return 'bg-accent-green/80';
+  if (toolName === 'Bash') return 'bg-accent-purple/80';
+  if (toolName === 'Agent') return 'bg-accent-teal/80';
+  return 'bg-ink-subtle/80';
+}
+
 function SessionTimeline({ data, isLive }: { data: SessionDetail; isLive: boolean }): JSX.Element {
   const breakdown = data.toolBreakdown ?? {};
   const breakdownEntries = Object.entries(breakdown).sort((a, b) => b[1] - a[1]);
@@ -280,7 +318,13 @@ function SessionTimeline({ data, isLive }: { data: SessionDetail; isLive: boolea
   const first = entries.length > 0 ? entries[0]!.timestamp : 0;
 
   if (entries.length === 0 && breakdownEntries.length === 0) {
-    return <div className="text-ink-muted text-xs">No tool calls in this session.</div>;
+    return (
+      <EmptyState
+        icon="timeline"
+        title="No tool calls"
+        subtitle="This session has no recorded tool calls."
+      />
+    );
   }
 
   return (
@@ -313,19 +357,19 @@ function SessionTimeline({ data, isLive }: { data: SessionDetail; isLive: boolea
 
       <div className="grid grid-cols-3 gap-2 mb-4 text-xs">
         {data.model && (
-          <div className="bg-bg-base rounded p-2">
+          <div className="bg-[rgba(255,255,255,0.03)] rounded-lg p-2.5">
             <div className="text-ink-muted text-[10px] uppercase">Model</div>
             <div className="font-mono">{data.model}</div>
           </div>
         )}
         {data.estimatedCostUsd != null && (
-          <div className="bg-bg-base rounded p-2">
+          <div className="bg-[rgba(255,255,255,0.03)] rounded-lg p-2.5">
             <div className="text-ink-muted text-[10px] uppercase">Cost</div>
             <div className="tabular-nums">${data.estimatedCostUsd.toFixed(3)}</div>
           </div>
         )}
         {data.outcome && (
-          <div className="bg-bg-base rounded p-2">
+          <div className="bg-[rgba(255,255,255,0.03)] rounded-lg p-2.5">
             <div className="text-ink-muted text-[10px] uppercase">Outcome</div>
             <div>{data.outcome}</div>
           </div>
@@ -335,7 +379,7 @@ function SessionTimeline({ data, isLive }: { data: SessionDetail; isLive: boolea
       {(data.qualityProxy || data.toolSelectionScore) && (
         <div className="grid grid-cols-2 gap-3 mb-4">
           {data.qualityProxy && (
-            <div className="bg-bg-base border border-bg-line rounded p-3">
+            <div className="bg-[rgba(255,255,255,0.03)] rounded-lg p-3">
               <div className="text-[10px] text-ink-muted uppercase tracking-wider mb-2">
                 Session Quality
               </div>
@@ -370,7 +414,7 @@ function SessionTimeline({ data, isLive }: { data: SessionDetail; isLive: boolea
             </div>
           )}
           {data.toolSelectionScore && (
-            <div className="bg-bg-base border border-bg-line rounded p-3">
+            <div className="bg-[rgba(255,255,255,0.03)] rounded-lg p-3">
               <div className="text-[10px] text-ink-muted uppercase tracking-wider mb-2">
                 Tool Selection
               </div>
@@ -400,8 +444,11 @@ function SessionTimeline({ data, isLive }: { data: SessionDetail; isLive: boolea
               return (
                 <div key={tool} className="flex items-center gap-2 text-[11px]">
                   <span className="w-20 text-ink-subtle truncate">{tool}</span>
-                  <div className="flex-1 h-3 bg-bg-base relative rounded">
-                    <div className="h-3 bg-accent-cyan/70 rounded" style={{ width: `${pct}%` }} />
+                  <div className="flex-1 h-3 bg-[rgba(255,255,255,0.04)] relative rounded">
+                    <div
+                      className={`h-3 rounded ${toolBarColor(tool)}`}
+                      style={{ width: `${pct}%` }}
+                    />
                   </div>
                   <span className="w-10 text-right text-ink-muted tabular-nums">{count}</span>
                 </div>
@@ -438,8 +485,71 @@ function fmtElapsed(ms: number): string {
   return `+${min}:${String(sec).padStart(2, '0')}`;
 }
 
+const ScrollableTimeline = forwardRef<HTMLDivElement, { children: ReactNode; isLive: boolean }>(
+  function ScrollableTimeline({ children, isLive }, ref) {
+    const containerRef = useRef<HTMLDivElement>(null);
+    const [showJump, setShowJump] = useState(false);
+
+    const checkScroll = useCallback(() => {
+      const el = containerRef.current;
+      if (!el) return;
+      const hasOverflow = el.scrollHeight > el.clientHeight + 40;
+      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+      setShowJump(hasOverflow && !atBottom);
+    }, []);
+
+    useEffect(() => {
+      const el = containerRef.current;
+      if (!el) return;
+      checkScroll();
+      el.addEventListener('scroll', checkScroll, { passive: true });
+      return () => el.removeEventListener('scroll', checkScroll);
+    }, [checkScroll]);
+
+    useEffect(() => {
+      if (isLive && containerRef.current) {
+        containerRef.current.scrollTop = containerRef.current.scrollHeight;
+      }
+    }, [isLive]);
+
+    const jumpToBottom = useCallback(() => {
+      containerRef.current?.scrollTo({
+        top: containerRef.current.scrollHeight,
+        behavior: 'smooth',
+      });
+    }, []);
+
+    const mergedRef = useCallback(
+      (el: HTMLDivElement | null) => {
+        (containerRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
+        if (typeof ref === 'function') ref(el);
+        else if (ref) (ref as React.MutableRefObject<HTMLDivElement | null>).current = el;
+      },
+      [ref],
+    );
+
+    return (
+      <div className="relative">
+        <div ref={mergedRef} className="overflow-auto max-h-[60vh]">
+          {children}
+        </div>
+        {showJump && (
+          <button
+            type="button"
+            onClick={jumpToBottom}
+            className="absolute bottom-2 right-3 px-2 py-1 rounded-lg bg-bg-elevated/90 border border-bg-line text-[10px] text-ink-subtle hover:text-ink-base hover:border-accent-green/40 backdrop-blur-sm transition-all shadow-lg"
+          >
+            ↓ Jump to bottom
+          </button>
+        )}
+      </div>
+    );
+  },
+);
+
 function InlineReplay({ sessionId, isLive }: { sessionId: string; isLive: boolean }): JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [viewMode, setViewMode] = useState<'gantt' | 'list'>('gantt');
 
   const { data, isLoading } = useQuery<ReplayData>({
     queryKey: qk.sessionReplay(sessionId),
@@ -469,92 +579,141 @@ function InlineReplay({ sessionId, isLive }: { sessionId: string; isLive: boolea
   return (
     <div className="mt-4">
       {segments.length > 0 && (
-        <div className="bg-bg-base border border-accent-amber/40 rounded p-2.5 mb-3">
+        <div className="bg-[rgba(255,179,36,0.05)] border border-accent-amber/30 rounded-xl p-2.5 mb-3">
           <div className="text-[11px] font-semibold text-accent-amber mb-1.5">
-            {segments.length} anti-pattern{segments.length > 1 ? 's' : ''}
+            {segments.length} anti-pattern{segments.length > 1 ? 's' : ''} detected
           </div>
           <div className="flex flex-wrap gap-1.5">
-            {segments.map((seg, i) => (
+            {aggregateSegments(segments).map(({ type, count, worstSeverity }) => (
               <span
-                key={`${seg.type}-${seg.startIndex}-${i}`}
+                key={type}
                 className={
                   'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] ' +
-                  (seg.severity === 'critical'
+                  (worstSeverity === 'critical'
                     ? 'bg-accent-red/10 text-accent-red border border-accent-red/30'
                     : 'bg-accent-amber/10 text-accent-amber border border-accent-amber/30')
                 }
               >
-                {SEGMENT_LABELS[seg.type] ?? seg.type}
-                <span className="opacity-70">({seg.iterations}×)</span>
+                {SEGMENT_LABELS[type] ?? type}
+                <span className="opacity-70">× {count}</span>
               </span>
             ))}
           </div>
         </div>
       )}
 
-      <div className="text-[10px] text-ink-muted uppercase tracking-wider mb-2">
-        replay · {data.timeline.length} calls
-        {isLive && <span className="text-accent-cyan ml-1">· auto-updating</span>}
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-[10px] text-ink-muted uppercase tracking-wider">
+          replay · {data.timeline.length} calls
+          {isLive && <span className="text-accent-cyan ml-1">· auto-updating</span>}
+        </div>
+        <div className="flex gap-1">
+          <button
+            type="button"
+            onClick={() => setViewMode('gantt')}
+            className={`px-2 py-0.5 rounded-lg text-[10px] ${viewMode === 'gantt' ? 'bg-accent-green/20 text-accent-green font-medium' : 'text-ink-muted hover:text-ink-base'}`}
+          >
+            Gantt
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode('list')}
+            className={`px-2 py-0.5 rounded-lg text-[10px] ${viewMode === 'list' ? 'bg-accent-green/20 text-accent-green font-medium' : 'text-ink-muted hover:text-ink-base'}`}
+          >
+            List
+          </button>
+        </div>
       </div>
 
-      <div ref={scrollRef} className="max-h-[400px] overflow-auto flex flex-col">
-        {data.timeline.map((entry, idx) => {
-          const seg = segmentAt[idx];
-          const borderColor = seg
-            ? seg.severity === 'critical'
-              ? 'border-l-accent-red'
-              : 'border-l-accent-amber'
-            : 'border-l-transparent';
-          const bgColor = seg
-            ? seg.severity === 'critical'
-              ? 'bg-accent-red/5'
-              : 'bg-accent-amber/5'
-            : '';
-          const elapsed = entry.timestamp - firstTs;
+      <ScrollableTimeline ref={scrollRef} isLive={isLive}>
+        {viewMode === 'gantt' ? (
+          <GanttTimeline entries={data.timeline} segments={segments} />
+        ) : (
+          <div className="flex flex-col">
+            {data.timeline.map((entry, idx) => {
+              const seg = segmentAt[idx];
+              const borderColor = seg
+                ? seg.severity === 'critical'
+                  ? 'border-l-accent-red'
+                  : 'border-l-accent-amber'
+                : 'border-l-transparent';
+              const bgColor = seg
+                ? seg.severity === 'critical'
+                  ? 'bg-[rgba(255,76,76,0.04)]'
+                  : 'bg-[rgba(255,178,36,0.04)]'
+                : '';
+              const elapsed = entry.timestamp - firstTs;
 
-          return (
-            <div
-              key={`${idx}-${entry.timestamp}`}
-              className={`flex items-center gap-1.5 px-2 py-0.5 border-l-2 ${borderColor} ${bgColor} text-[11px]`}
-            >
-              <span className="w-10 text-ink-muted tabular-nums shrink-0">
-                {fmtElapsed(elapsed)}
-              </span>
-              <span className="w-4 text-center shrink-0" aria-hidden="true">
-                {TOOL_ICONS[entry.toolName] ?? '·'}
-              </span>
-              <span className="w-16 truncate font-medium text-ink-base shrink-0">
-                {entry.toolName}
-              </span>
-              <span className="flex-1 truncate text-ink-subtle min-w-0">
-                {entry.filePath ?? entry.command ?? ''}
-              </span>
-              <span className="w-14 text-right tabular-nums text-ink-muted shrink-0">
-                {entry.durationMs != null ? `${entry.durationMs}ms` : '—'}
-              </span>
-              <span
-                className={`w-3 text-center shrink-0 ${entry.success ? 'text-accent-green' : 'text-accent-red'}`}
-              >
-                {entry.success ? '✓' : '✗'}
-              </span>
-              {seg && idx === seg.startIndex && (
-                <span
-                  className={
-                    'ml-0.5 px-1 py-0.5 rounded text-[9px] font-medium shrink-0 ' +
-                    (seg.severity === 'critical'
-                      ? 'bg-accent-red/20 text-accent-red'
-                      : 'bg-accent-amber/20 text-accent-amber')
-                  }
+              return (
+                <div
+                  key={`${idx}-${entry.timestamp}`}
+                  className={`flex items-center gap-1.5 px-2 py-0.5 border-l-2 ${borderColor} ${bgColor} text-[11px]`}
                 >
-                  {SEGMENT_LABELS[seg.type] ?? seg.type}
-                </span>
-              )}
-            </div>
-          );
-        })}
-      </div>
+                  <span className="w-10 text-ink-muted tabular-nums shrink-0">
+                    {fmtElapsed(elapsed)}
+                  </span>
+                  <span className="w-4 text-center shrink-0" aria-hidden="true">
+                    {TOOL_ICONS[entry.toolName] ?? '·'}
+                  </span>
+                  <span className="w-16 truncate font-medium text-ink-base shrink-0">
+                    {entry.toolName}
+                  </span>
+                  <span className="flex-1 truncate text-ink-subtle min-w-0">
+                    {entry.filePath ?? entry.command ?? ''}
+                  </span>
+                  <span className="w-14 text-right tabular-nums text-ink-muted shrink-0">
+                    {entry.durationMs != null ? `${entry.durationMs}ms` : '—'}
+                  </span>
+                  <span
+                    className={`w-3 text-center shrink-0 ${entry.success ? 'text-accent-green' : 'text-accent-red'}`}
+                  >
+                    {entry.success ? '✓' : '✗'}
+                  </span>
+                  {seg && idx === seg.startIndex && (
+                    <span
+                      className={
+                        'ml-0.5 px-1 py-0.5 rounded text-[9px] font-medium shrink-0 ' +
+                        (seg.severity === 'critical'
+                          ? 'bg-accent-red/20 text-accent-red'
+                          : 'bg-accent-amber/20 text-accent-amber')
+                      }
+                    >
+                      {SEGMENT_LABELS[seg.type] ?? seg.type}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </ScrollableTimeline>
     </div>
   );
+}
+
+interface AggregatedSegment {
+  readonly type: string;
+  readonly count: number;
+  readonly totalIterations: number;
+  readonly worstSeverity: 'warning' | 'critical';
+}
+
+function aggregateSegments(segments: Segment[]): AggregatedSegment[] {
+  const map = new Map<
+    string,
+    { count: number; totalIterations: number; worstSeverity: 'warning' | 'critical' }
+  >();
+  for (const seg of segments) {
+    const existing = map.get(seg.type);
+    if (existing) {
+      existing.count++;
+      existing.totalIterations += seg.iterations;
+      if (seg.severity === 'critical') existing.worstSeverity = 'critical';
+    } else {
+      map.set(seg.type, { count: 1, totalIterations: seg.iterations, worstSeverity: seg.severity });
+    }
+  }
+  return Array.from(map.entries()).map(([type, data]) => ({ type, ...data }));
 }
 
 function buildSegmentLookup(length: number, segments: Segment[]): (Segment | null)[] {

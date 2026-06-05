@@ -77,7 +77,9 @@ export interface ApiHandlerDeps {
       developer?: string;
     }) => readonly SessionLikeForCostOutcome[];
   };
-  readonly costTracker?: { getMetrics: () => { sessionTotalCostUsd?: number | null } };
+  readonly costTracker?: {
+    getMetrics: () => { sessionTotalCostUsd?: number | null; model?: string | null };
+  };
   readonly costForecast?: () => unknown;
   readonly antiPatternDetector?: { getCurrentPatterns: () => unknown };
   readonly auditTrailManager?: { getAuditLog: () => readonly unknown[] };
@@ -373,7 +375,9 @@ export function createApiHandler(
       if (deps.sessionTracker) {
         const live = deps.sessionTracker.getMetrics();
         if (live.sessionId === sessionId) {
-          const costUsd = deps.costTracker?.getMetrics().sessionTotalCostUsd ?? null;
+          const costMetrics = deps.costTracker?.getMetrics();
+          const costUsd = costMetrics?.sessionTotalCostUsd ?? null;
+          const model = costMetrics?.model ?? null;
           const antiPatterns = deps.antiPatternDetector
             ? (deps.antiPatternDetector.getCurrentPatterns() as Array<{
                 type: string;
@@ -386,6 +390,8 @@ export function createApiHandler(
             durationMs: live.sessionDurationMs,
             toolCallCount: live.toolCallCount,
             estimatedCostUsd: costUsd,
+            model,
+            outcome: 'in progress',
             toolBreakdown: live.toolCallCountByTool,
             antiPatterns,
             // Use the same `timeline` shape as persisted sessions so the

@@ -1,10 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
+import { EmptyState } from '../components/EmptyState';
 import {
   ResponsiveContainer,
-  LineChart,
-  Line,
+  AreaChart,
+  Area,
   BarChart,
   Bar,
+  Cell,
   XAxis,
   YAxis,
   Tooltip,
@@ -66,11 +68,33 @@ interface PersonalCoachInsufficient {
 
 type PersonalCoachResult = PersonalCoachOk | PersonalCoachInsufficient;
 
-const TICK_STYLE = { fill: '#94a3b8', fontSize: 10 };
-const GRID_STROKE = '#1e293b';
-const ACCENT = '#22d3ee';
-const ACCENT_AMBER = '#f59e0b';
-const ACCENT_GREEN = '#34d399';
+const TICK_STYLE = { fill: '#8e9bae', fontSize: 10 };
+const GRID_STROKE = 'rgba(255, 255, 255, 0.06)';
+const ACCENT = '#1CE783';
+const ACCENT_AMBER = '#FFB224';
+const ACCENT_GREEN = '#1CE783';
+const ACCENT_PURPLE = '#9945FF';
+const ACCENT_BLUE = '#4A9EFF';
+const ACCENT_TEAL = '#36D8B7';
+
+function toolFillColor(toolName: string): string {
+  if (toolName === 'Read') return ACCENT_BLUE;
+  if (toolName === 'Edit' || toolName === 'Write') return ACCENT_GREEN;
+  if (toolName === 'Bash') return ACCENT_PURPLE;
+  if (toolName === 'Agent') return ACCENT_TEAL;
+  return '#8e9bae';
+}
+
+function outcomeFillColor(outcome: string): string {
+  const lower = outcome.toLowerCase();
+  if (lower === 'bug fix' || lower === 'fix') return '#FF6B6B';
+  if (lower === 'feature') return ACCENT_GREEN;
+  if (lower === 'refactor') return ACCENT_BLUE;
+  if (lower === 'configuration' || lower === 'config') return ACCENT_AMBER;
+  if (lower === 'test') return ACCENT_TEAL;
+  if (lower === 'docs') return '#C4B5FD';
+  return ACCENT_PURPLE;
+}
 
 // Render only the month-day portion of an ISO `YYYY-MM-DD` axis label
 // while keeping the full year-prefixed string in the chart data so
@@ -116,13 +140,19 @@ export function History(): JSX.Element {
 
   return (
     <section>
-      <h1 className="text-xl font-semibold mb-4">History</h1>
+      <h1 className="text-xl font-semibold gradient-text mb-4">History</h1>
 
       <div className="grid grid-cols-2 gap-3">
         <Panel title="Weekly efficiency · last 8">
           <div className="h-44 min-w-0">
             <ResponsiveContainer width="100%" height="100%" minWidth={0}>
-              <LineChart data={weeklyData}>
+              <AreaChart data={weeklyData}>
+                <defs>
+                  <linearGradient id="effGradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={ACCENT} stopOpacity={0.3} />
+                    <stop offset="100%" stopColor={ACCENT} stopOpacity={0} />
+                  </linearGradient>
+                </defs>
                 <CartesianGrid stroke={GRID_STROKE} strokeDasharray="3 3" />
                 <XAxis
                   dataKey="week"
@@ -133,19 +163,22 @@ export function History(): JSX.Element {
                 <YAxis tick={TICK_STYLE} stroke={GRID_STROKE} domain={[0, 100]} unit="%" />
                 <Tooltip
                   contentStyle={{
-                    background: '#0f172a',
-                    border: '1px solid #1e293b',
+                    background: 'rgba(22, 27, 34, 0.9)',
+                    border: '1px solid rgba(255,255,255,0.1)',
+                    borderRadius: 8,
+                    backdropFilter: 'blur(8px)',
                     fontSize: 12,
                   }}
                 />
-                <Line
+                <Area
                   type="monotone"
                   dataKey="efficiency"
                   stroke={ACCENT}
                   strokeWidth={2}
-                  dot={{ r: 2 }}
+                  fill="url(#effGradient)"
+                  dot={{ r: 2, fill: ACCENT }}
                 />
-              </LineChart>
+              </AreaChart>
             </ResponsiveContainer>
           </div>
         </Panel>
@@ -154,17 +187,24 @@ export function History(): JSX.Element {
           <div className="h-44 min-w-0">
             <ResponsiveContainer width="100%" height="100%" minWidth={0}>
               <BarChart data={dailyData}>
+                <defs>
+                  <linearGradient id="costGradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={ACCENT} stopOpacity={0.9} />
+                    <stop offset="100%" stopColor={ACCENT} stopOpacity={0.4} />
+                  </linearGradient>
+                </defs>
                 <CartesianGrid stroke={GRID_STROKE} strokeDasharray="3 3" />
                 <XAxis dataKey="day" tick={TICK_STYLE} stroke={GRID_STROKE} />
                 <YAxis tick={TICK_STYLE} stroke={GRID_STROKE} unit="$" />
                 <Tooltip
                   contentStyle={{
-                    background: '#0f172a',
-                    border: '1px solid #1e293b',
+                    background: 'rgba(22, 27, 34, 0.9)',
+                    border: '1px solid rgba(255,255,255,0.1)',
+                    borderRadius: 8,
                     fontSize: 12,
                   }}
                 />
-                <Bar dataKey="cost" fill={ACCENT} />
+                <Bar dataKey="cost" fill="url(#costGradient)" radius={[3, 3, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -172,9 +212,16 @@ export function History(): JSX.Element {
 
         <Panel title="Cost per outcome · last 30 days">
           {outcomeData.length === 0 ? (
-            <EmptyState text="No outcomes yet — finish a few sessions and check back." />
+            <EmptyState
+              icon="radar"
+              title="No outcomes yet"
+              subtitle="Finish a few sessions and check back."
+            />
           ) : (
-            <div className="h-44 min-w-0">
+            <div
+              className="min-w-0"
+              style={{ height: `${Math.max(176, outcomeData.length * 32 + 40)}px` }}
+            >
               <ResponsiveContainer width="100%" height="100%" minWidth={0}>
                 <BarChart data={outcomeData} layout="vertical">
                   <CartesianGrid stroke={GRID_STROKE} strokeDasharray="3 3" />
@@ -184,16 +231,25 @@ export function History(): JSX.Element {
                     dataKey="outcome"
                     tick={TICK_STYLE}
                     stroke={GRID_STROKE}
-                    width={90}
+                    width={110}
                   />
                   <Tooltip
                     contentStyle={{
-                      background: '#0f172a',
-                      border: '1px solid #1e293b',
+                      background: 'rgba(22, 27, 34, 0.9)',
+                      border: '1px solid rgba(255,255,255,0.1)',
+                      borderRadius: 8,
                       fontSize: 12,
                     }}
                   />
-                  <Bar dataKey="totalCost" fill={ACCENT} />
+                  <Bar dataKey="totalCost" radius={[0, 3, 3, 0]}>
+                    {outcomeData.map((entry) => (
+                      <Cell
+                        key={entry.outcome}
+                        fill={outcomeFillColor(entry.outcome)}
+                        fillOpacity={0.8}
+                      />
+                    ))}
+                  </Bar>
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -202,11 +258,21 @@ export function History(): JSX.Element {
 
         <Panel title="Anti-pattern frequency · weekly">
           {antiPatternSeries.length === 0 ? (
-            <EmptyState text="No anti-patterns detected in the loaded weeks." />
+            <EmptyState
+              icon="checkmark"
+              title="No anti-patterns detected"
+              subtitle="No anti-patterns detected in the loaded weeks."
+            />
           ) : (
             <div className="h-44 min-w-0">
               <ResponsiveContainer width="100%" height="100%" minWidth={0}>
                 <BarChart data={antiPatternSeries}>
+                  <defs>
+                    <linearGradient id="antiPatternGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={ACCENT_AMBER} stopOpacity={0.9} />
+                      <stop offset="100%" stopColor={ACCENT_AMBER} stopOpacity={0.4} />
+                    </linearGradient>
+                  </defs>
                   <CartesianGrid stroke={GRID_STROKE} strokeDasharray="3 3" />
                   <XAxis
                     dataKey="week"
@@ -217,12 +283,13 @@ export function History(): JSX.Element {
                   <YAxis tick={TICK_STYLE} stroke={GRID_STROKE} />
                   <Tooltip
                     contentStyle={{
-                      background: '#0f172a',
-                      border: '1px solid #1e293b',
+                      background: 'rgba(22, 27, 34, 0.9)',
+                      border: '1px solid rgba(255,255,255,0.1)',
+                      borderRadius: 8,
                       fontSize: 12,
                     }}
                   />
-                  <Bar dataKey="count" fill={ACCENT_AMBER} />
+                  <Bar dataKey="count" fill="url(#antiPatternGradient)" radius={[3, 3, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -231,7 +298,11 @@ export function History(): JSX.Element {
 
         <Panel title="Model performance">
           {modelPerf.length === 0 ? (
-            <EmptyState text="No model data yet — complete a few sessions." />
+            <EmptyState
+              icon="radar"
+              title="No model data yet"
+              subtitle="Complete a few sessions to see model performance."
+            />
           ) : (
             <div className="h-44 overflow-y-auto text-xs">
               <table className="w-full">
@@ -275,9 +346,16 @@ export function History(): JSX.Element {
 
         <Panel title="Top tools · all sessions">
           {topTools.length === 0 ? (
-            <EmptyState text="No tool data yet." />
+            <EmptyState
+              icon="code"
+              title="No tool data yet"
+              subtitle="Tool usage data will appear after coding sessions."
+            />
           ) : (
-            <div className="h-44 min-w-0">
+            <div
+              className="min-w-0"
+              style={{ height: `${Math.max(176, topTools.length * 28 + 40)}px` }}
+            >
               <ResponsiveContainer width="100%" height="100%" minWidth={0}>
                 <BarChart data={topTools} layout="vertical">
                   <CartesianGrid stroke={GRID_STROKE} strokeDasharray="3 3" />
@@ -287,16 +365,21 @@ export function History(): JSX.Element {
                     dataKey="tool"
                     tick={TICK_STYLE}
                     stroke={GRID_STROKE}
-                    width={100}
+                    width={120}
                   />
                   <Tooltip
                     contentStyle={{
-                      background: '#0f172a',
-                      border: '1px solid #1e293b',
+                      background: 'rgba(22, 27, 34, 0.9)',
+                      border: '1px solid rgba(255,255,255,0.1)',
+                      borderRadius: 8,
                       fontSize: 12,
                     }}
                   />
-                  <Bar dataKey="count" fill={ACCENT_GREEN} />
+                  <Bar dataKey="count" radius={[0, 3, 3, 0]}>
+                    {topTools.map((entry) => (
+                      <Cell key={entry.tool} fill={toolFillColor(entry.tool)} fillOpacity={0.8} />
+                    ))}
+                  </Bar>
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -313,15 +396,13 @@ export function History(): JSX.Element {
 
 function Panel({ title, children }: { title: string; children: React.ReactNode }): JSX.Element {
   return (
-    <div className="bg-bg-panel border border-bg-line rounded p-3">
-      <div className="text-[10px] text-ink-muted uppercase tracking-wider mb-2">{title}</div>
+    <div className="glass-card p-4">
+      <div className="text-[11px] text-ink-muted uppercase tracking-wider font-medium mb-3">
+        {title}
+      </div>
       {children}
     </div>
   );
-}
-
-function EmptyState({ text }: { text: string }): JSX.Element {
-  return <div className="text-ink-muted text-xs h-44 flex items-center">{text}</div>;
 }
 
 function CoachCard({ data }: { data: PersonalCoachResult | undefined }): JSX.Element {

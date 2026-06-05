@@ -3,6 +3,10 @@ import { useQuery } from '@tanstack/react-query';
 import { useLocation } from 'wouter';
 import { useLiveStore, type AlertEvent } from '../store/liveStore';
 import { Kpi } from '../components/Kpi';
+import { AnimatedCard } from '../components/AnimatedCard';
+import { Sparkline } from '../components/Sparkline';
+import { EmptyState } from '../components/EmptyState';
+import { GanttTimeline } from '../components/GanttTimeline';
 import {
   fetchRecentAlerts,
   fetchCost,
@@ -150,11 +154,11 @@ export function Today(): JSX.Element {
 
   const calls = persistedTodayCalls;
   const spendLoading = !cost && costPending && sessionsPending;
-  // Daily spend = max of SSE-pushed daily total vs. persisted sessions + current
-  // session from REST. SSE uses priorDailyCostUsd computed at server startup,
-  // which can lag behind if other sessions completed since then.
-  const restDailyTotal = persistedTodaySpend + (costApi?.cost?.sessionTotalCostUsd ?? 0);
-  const todayTotal = Math.max(cost?.todayTotalUsd ?? 0, restDailyTotal);
+  // The sessions list API already includes the live session with its current
+  // cost, so persistedTodaySpend covers all sessions including the active one.
+  // Take the max of SSE-pushed total (which may be more current) vs. the REST
+  // sum to handle startup lag in either direction.
+  const todayTotal = Math.max(cost?.todayTotalUsd ?? 0, persistedTodaySpend);
 
   const currentSessionFlags = Math.max(apiAntiPatterns?.length ?? 0, antiPatterns.length);
   const flagsCount = persistedTodayFlags + currentSessionFlags;
@@ -163,38 +167,79 @@ export function Today(): JSX.Element {
     [],
   );
 
+  const effScore = sessionCurrent?.efficiencyScore ?? null;
+  const effDisplay =
+    effScore !== null && Number.isFinite(effScore) ? `${Math.round(effScore * 100)}%` : '—';
+  const effSub =
+    effScore === null
+      ? 'needs more data'
+      : Math.round(effScore * 100) >= 80
+        ? 'strong session'
+        : Math.round(effScore * 100) >= 50
+          ? 'mixed signals'
+          : 'needs attention';
+
   return (
     <section>
       <header className="flex items-baseline justify-between mb-4">
-        <h1 className="text-xl font-semibold">Today</h1>
+        <h1 className="text-xl font-semibold gradient-text">Today</h1>
         <span className="text-xs text-ink-muted">{headerTimestamp}</span>
       </header>
 
-      <div className="grid grid-cols-4 gap-2 mb-3">
-        <Kpi label="spend" tone="accent" value={spendLoading ? '…' : `$${todayTotal.toFixed(2)}`} />
-        <Kpi label="calls" value={String(calls)} />
-        <EfficiencyKpi score={sessionCurrent?.efficiencyScore ?? null} />
-        <Kpi label="flags" tone={flagsCount > 0 ? 'warn' : 'neutral'} value={String(flagsCount)} />
-      </div>
+      <AnimatedCard index={0} className="glass-card glow-green p-5 mb-4">
+        <div className="grid grid-cols-4 gap-6">
+          <Kpi
+            label="efficiency"
+            hero
+            value={effDisplay}
+            sub={effSub}
+            {...(effScore !== null
+              ? { animate: true, numericValue: Math.round(effScore * 100), suffix: '%' }
+              : {})}
+          />
+          <Kpi
+            label="spend today"
+            tone="accent"
+            value={spendLoading ? '…' : `$${todayTotal.toFixed(2)}`}
+            {...(!spendLoading
+              ? { animate: true, numericValue: todayTotal, prefix: '$', decimals: 2 }
+              : {})}
+          />
+          <Kpi label="tool calls" value={String(calls)} animate numericValue={calls} />
+          <Kpi
+            label="flags"
+            tone={flagsCount > 0 ? 'warn' : 'neutral'}
+            value={String(flagsCount)}
+            animate
+            numericValue={flagsCount}
+          />
+        </div>
+      </AnimatedCard>
 
-      <ModelHealthCard health={modelHealth} />
+      <AnimatedCard index={1}>
+        <ModelHealthCard health={modelHealth} />
+      </AnimatedCard>
 
-      <ForecastEodCard
-        todayTotal={todayTotal}
-        forecastEod={
-          // SSE cost-update already includes priorDailyCostUsd in the forecast.
-          // The REST fallback is session-level only, so add persisted spend.
-          spendLoading
-            ? null
-            : (cost?.forecastEodUsd ??
-              (costApi?.forecast?.forecastEndOfDayUsd != null
-                ? persistedTodaySpend + costApi.forecast.forecastEndOfDayUsd
-                : null))
-        }
-      />
+      <AnimatedCard index={2}>
+        <ForecastEodCard
+          todayTotal={todayTotal}
+          forecastEod={
+            spendLoading
+              ? null
+              : (cost?.forecastEodUsd ??
+                (costApi?.forecast?.forecastEndOfDayUsd != null
+                  ? persistedTodaySpend + costApi.forecast.forecastEndOfDayUsd
+                  : null))
+          }
+          spendPoints={buildSpendSparkline(
+            todaySessions ?? [],
+            costApi?.cost?.sessionTotalCostUsd ?? 0,
+          )}
+        />
+      </AnimatedCard>
 
       {flagsCount > 0 && (
-        <div className="mb-3 bg-bg-panel border border-accent-amber/40 rounded p-2.5 text-xs">
+        <AnimatedCard index={3} className="mb-3 glass-card border-accent-amber/40 p-2.5 text-xs">
           {antiPatterns.length > 0 ? (
             <>
               <span className="text-accent-amber font-semibold">⚠ {antiPatterns[0].type}</span>
@@ -218,17 +263,21 @@ export function Today(): JSX.Element {
               </code>
             </>
           ) : null}
-        </div>
+        </AnimatedCard>
       )}
 
-      <div className="grid grid-cols-2 gap-3 mb-3">
+      <AnimatedCard index={4} className="grid grid-cols-2 gap-3 mb-3">
         <QualityProxyPanel />
         <ToolSelectionPanel />
-      </div>
+      </AnimatedCard>
 
-      <LiveSessionPane sessions={todaySessions ?? []} />
+      <AnimatedCard index={5}>
+        <LiveSessionPane sessions={todaySessions ?? []} />
+      </AnimatedCard>
 
-      <RecentAlertsPanel />
+      <AnimatedCard index={6}>
+        <RecentAlertsPanel />
+      </AnimatedCard>
     </section>
   );
 }
@@ -248,12 +297,16 @@ function QualityProxyPanel(): JSX.Element {
   });
 
   return (
-    <div className="bg-bg-panel border border-bg-line rounded p-3">
+    <div className="glass-card p-3">
       <div className="text-[10px] text-ink-muted uppercase tracking-wider mb-2">
         Today · Session Quality
       </div>
       {!data || data.totalSignals === 0 ? (
-        <div className="text-ink-muted text-xs">Waiting for edits and test runs…</div>
+        <EmptyState
+          icon="checkmark"
+          title="Waiting for edits and test runs"
+          subtitle="Quality metrics appear after editing files and running tests."
+        />
       ) : (
         <>
           <div className="grid grid-cols-2 gap-2 text-xs">
@@ -303,12 +356,16 @@ function ToolSelectionPanel(): JSX.Element {
   });
 
   return (
-    <div className="bg-bg-panel border border-bg-line rounded p-3">
+    <div className="glass-card p-3">
       <div className="text-[10px] text-ink-muted uppercase tracking-wider mb-2">
         Today · Tool Selection
       </div>
       {!data || data.totalCalls === 0 ? (
-        <div className="text-ink-muted text-xs">Waiting for tool calls…</div>
+        <EmptyState
+          icon="radar"
+          title="Waiting for tool calls"
+          subtitle="Tool selection scoring begins after tool calls arrive."
+        />
       ) : (
         <>
           <div className="flex items-baseline gap-2">
@@ -352,9 +409,17 @@ interface ReplayTimelineEntry {
   readonly command?: string;
 }
 
+interface ReplaySegment {
+  readonly type: string;
+  readonly startIndex: number;
+  readonly endIndex: number;
+  readonly severity: 'warning' | 'critical';
+}
+
 interface ReplayData {
   readonly sessionId: string;
   readonly timeline: ReplayTimelineEntry[];
+  readonly segments?: ReplaySegment[];
 }
 
 const TOOL_ICONS: Record<string, string> = {
@@ -379,6 +444,7 @@ function fmtElapsed(ms: number): string {
 
 function LiveSessionPane({ sessions }: { sessions: SessionSummary[] }): JSX.Element {
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<'gantt' | 'list'>('list');
   const [, navigate] = useLocation();
 
   const { data: current } = useQuery<{ sessionId: string; liveSessions?: string[] }>({
@@ -428,7 +494,7 @@ function LiveSessionPane({ sessions }: { sessions: SessionSummary[] }): JSX.Elem
 
   return (
     <div
-      className="bg-bg-panel border border-bg-line rounded mb-3 grid grid-cols-[220px_1fr] overflow-hidden"
+      className="glass-card mb-3 grid grid-cols-[220px_1fr] overflow-hidden"
       style={{ height: '320px' }}
     >
       {/* Session list */}
@@ -469,20 +535,40 @@ function LiveSessionPane({ sessions }: { sessions: SessionSummary[] }): JSX.Elem
           );
         })}
         {liveSessionIds.size === 0 && todaySessions.length === 0 && (
-          <div className="p-2 text-ink-muted text-xs">No sessions today.</div>
+          <EmptyState
+            icon="code"
+            title="No sessions today"
+            subtitle="Start coding with Claude to see sessions here."
+          />
         )}
       </div>
 
       {/* Live tail */}
       <div className="flex flex-col overflow-hidden">
         {activeId && (
-          <div className="flex justify-end px-2 py-1 border-b border-bg-line shrink-0">
+          <div className="flex items-center justify-between px-2 py-1 border-b border-bg-line shrink-0">
+            <div className="flex gap-1">
+              <button
+                type="button"
+                onClick={() => setViewMode('gantt')}
+                className={`px-2 py-0.5 rounded-lg text-[10px] ${viewMode === 'gantt' ? 'bg-accent-green/20 text-accent-green font-medium' : 'text-ink-muted hover:text-ink-base'}`}
+              >
+                Gantt
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode('list')}
+                className={`px-2 py-0.5 rounded-lg text-[10px] ${viewMode === 'list' ? 'bg-accent-green/20 text-accent-green font-medium' : 'text-ink-muted hover:text-ink-base'}`}
+              >
+                List
+              </button>
+            </div>
             <button
               type="button"
-              onClick={() => navigate(`/replay/${activeId}`)}
+              onClick={() => navigate(`/sessions?id=${activeId}`)}
               className="text-[10px] text-accent-cyan hover:underline"
             >
-              full replay &rarr;
+              full session &rarr;
             </button>
           </div>
         )}
@@ -491,11 +577,20 @@ function LiveSessionPane({ sessions }: { sessions: SessionSummary[] }): JSX.Elem
             <div className="text-ink-muted text-xs p-2">Select a session to view its timeline.</div>
           )}
           {activeId && timeline.length === 0 && (
-            <div className="text-ink-muted text-xs p-2">
-              {isLive ? 'Waiting for tool calls…' : 'No tool calls in this session.'}
-            </div>
+            <EmptyState
+              icon="timeline"
+              title={isLive ? 'Waiting for tool calls' : 'No tool calls'}
+              subtitle={
+                isLive
+                  ? 'Tool calls will appear here in real time.'
+                  : 'This session has no recorded tool calls.'
+              }
+            />
           )}
-          {timeline.length > 0 && (
+          {timeline.length > 0 && viewMode === 'gantt' && (
+            <GanttTimeline entries={timeline} segments={replay?.segments ?? []} />
+          )}
+          {timeline.length > 0 && viewMode === 'list' && (
             <div className="flex flex-col">
               {timeline.map((entry, idx) => {
                 const elapsed = entry.timestamp - firstTs;
@@ -567,7 +662,7 @@ function RecentAlertsPanel(): JSX.Element | null {
   const sortedEntries = [...entries].sort((a, b) => b.firedAt - a.firedAt);
 
   return (
-    <div className="bg-bg-panel border border-bg-line rounded p-3">
+    <div className="glass-card p-3">
       <div className="text-[10px] text-ink-muted uppercase tracking-wider mb-2">recent alerts</div>
       {isLoading && <div className="text-ink-muted text-xs">Loading…</div>}
       {error && <div className="text-accent-red text-xs">Error loading recent alerts.</div>}
@@ -678,19 +773,6 @@ function computeTodayFlags(sessions: SessionSummary[]): number {
   return total;
 }
 
-// F-050: small wrapper that picks tone from the score. The score itself is
-// a unitless [0, 1] composite computed by EfficiencyScorer on the server;
-// we render it as a percentage so the KPI is legible at a glance.
-function EfficiencyKpi({ score }: { score: number | null }): JSX.Element {
-  if (score === null || !Number.isFinite(score)) {
-    return <Kpi label="eff." tone="good" value="—" sub="needs more data" />;
-  }
-  const pct = Math.round(score * 100);
-  // Bands match the EfficiencyScorer narrative: ≥80% strong, ≥50% mixed, <50% poor.
-  const tone: 'good' | 'warn' | 'accent' = pct >= 80 ? 'good' : pct >= 50 ? 'accent' : 'warn';
-  return <Kpi label="eff." tone={tone} value={`${pct}%`} />;
-}
-
 export interface ModelHealthResult {
   readonly status: 'healthy' | 'degraded' | 'poor' | 'unknown';
   readonly model: string | null;
@@ -775,17 +857,17 @@ export function computeModelHealth(
   };
 }
 
-const HEALTH_STYLE: Record<ModelHealthResult['status'], { dot: string; border: string }> = {
-  healthy: { dot: 'text-emerald-400', border: 'border-bg-line' },
-  degraded: { dot: 'text-accent-amber', border: 'border-accent-amber/40' },
-  poor: { dot: 'text-accent-red', border: 'border-accent-red/40' },
-  unknown: { dot: 'text-ink-muted', border: 'border-bg-line' },
+const HEALTH_STYLE: Record<ModelHealthResult['status'], { dot: string }> = {
+  healthy: { dot: 'text-emerald-400' },
+  degraded: { dot: 'text-accent-amber' },
+  poor: { dot: 'text-accent-red' },
+  unknown: { dot: 'text-ink-muted' },
 };
 
 function ModelHealthCard({ health }: { health: ModelHealthResult }): JSX.Element {
   const style = HEALTH_STYLE[health.status];
   return (
-    <div className={`bg-bg-panel border ${style.border} rounded p-2.5 mb-3`}>
+    <div className={`glass-card p-2.5 mb-3`}>
       <div className="flex items-center gap-2 text-xs">
         <span className={style.dot} aria-hidden="true">
           ●
@@ -798,43 +880,67 @@ function ModelHealthCard({ health }: { health: ModelHealthResult }): JSX.Element
   );
 }
 
+function buildSpendSparkline(sessions: SessionSummary[], currentSessionCost: number): number[] {
+  const todaySorted = sessions
+    .filter((s) => s.startTime && isToday(s.startTime) && s.estimatedCostUsd != null)
+    .sort((a, b) => (a.startTime ?? 0) - (b.startTime ?? 0));
+
+  if (todaySorted.length === 0 && currentSessionCost <= 0) return [];
+
+  const points: number[] = [0];
+  let cumulative = 0;
+  for (const s of todaySorted) {
+    cumulative += s.estimatedCostUsd ?? 0;
+    points.push(cumulative);
+  }
+  if (currentSessionCost > 0) {
+    points.push(cumulative + currentSessionCost);
+  }
+  return points;
+}
+
 function ForecastEodCard({
   todayTotal,
   forecastEod,
+  spendPoints,
 }: {
   todayTotal: number;
   forecastEod: number | null;
+  spendPoints: number[];
 }): JSX.Element {
   const hasForecast = forecastEod !== null && Number.isFinite(forecastEod);
-  // The forecast is based on the live session's burn rate. If the MCP server
-  // restarted mid-day the forecast only reflects the current session and can be
-  // lower than the already-observed spend. Use todayTotal as the floor so the
-  // card never shows a nonsensical "negative remaining" projection.
   const effectiveForecast = hasForecast ? Math.max(forecastEod, todayTotal) : 0;
   const delta = hasForecast ? effectiveForecast - todayTotal : 0;
   const pct = hasForecast && todayTotal > 0 ? (delta / todayTotal) * 100 : 0;
 
   return (
-    <div className="bg-bg-panel border border-bg-line rounded p-3 mb-3">
+    <div className="glass-card p-3 mb-3">
       <div className="text-[10px] text-ink-muted uppercase tracking-wider mb-1.5">
         forecast · end of day
       </div>
       {hasForecast ? (
-        <div className="flex items-baseline gap-3">
-          <span className="text-lg font-semibold text-accent-cyan tabular-nums">
-            ${effectiveForecast.toFixed(2)}
-          </span>
-          <span className="text-xs text-ink-muted tabular-nums">
-            {delta > 0 ? (
-              <>
-                +${delta.toFixed(2)}
-                {todayTotal > 0 && ` (+${pct.toFixed(0)}%)`} from now
-              </>
-            ) : (
-              <>on pace</>
-            )}
-          </span>
-        </div>
+        <>
+          <div className="flex items-baseline gap-3">
+            <span className="text-lg font-semibold text-accent-cyan tabular-nums">
+              ${effectiveForecast.toFixed(2)}
+            </span>
+            <span className="text-xs text-ink-muted tabular-nums">
+              {delta > 0 ? (
+                <>
+                  +${delta.toFixed(2)}
+                  {todayTotal > 0 && ` (+${pct.toFixed(0)}%)`} from now
+                </>
+              ) : (
+                <>on pace</>
+              )}
+            </span>
+          </div>
+          {spendPoints.length >= 2 && (
+            <div className="mt-2">
+              <Sparkline values={spendPoints} height={36} animate ariaLabel="Today spend" />
+            </div>
+          )}
+        </>
       ) : (
         <div className="text-ink-muted text-xs">
           Insufficient data — forecast appears once burn rate stabilizes.

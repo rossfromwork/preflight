@@ -59,11 +59,11 @@ export function Audit(): JSX.Element {
   return (
     <section>
       <header className="flex items-baseline justify-between mb-4">
-        <h1 className="text-xl font-semibold">Audit</h1>
+        <h1 className="text-xl font-semibold gradient-text">Audit</h1>
         <button
           type="button"
           onClick={() => downloadJsonl(rows)}
-          className="text-xs px-2 py-1 bg-bg-panel border border-bg-line rounded hover:border-accent-cyan"
+          className="text-xs px-2 py-1 bg-[rgba(255,255,255,0.05)] border border-[rgba(255,255,255,0.1)] rounded-lg hover:border-accent-green hover:glow-green transition-all duration-150"
         >
           Export JSONL
         </button>
@@ -78,8 +78,8 @@ export function Audit(): JSX.Element {
             className={
               'text-xs px-2 py-1 rounded border ' +
               (filter === key
-                ? 'bg-bg-line border-accent-cyan text-ink-base'
-                : 'bg-bg-panel border-bg-line text-ink-subtle hover:text-ink-base')
+                ? 'bg-[rgba(28,231,131,0.08)] border-accent-green text-ink-base'
+                : 'bg-[rgba(255,255,255,0.03)] border-[rgba(255,255,255,0.08)] text-ink-subtle hover:border-[rgba(255,255,255,0.15)]')
             }
           >
             {label}
@@ -97,9 +97,9 @@ export function Audit(): JSX.Element {
       )}
 
       {!isLoading && !error && (
-        <div className="bg-bg-panel border border-bg-line rounded">
+        <div className="glass-card">
           <table className="w-full text-xs">
-            <thead className="text-ink-muted bg-bg-line/40">
+            <thead className="text-ink-muted bg-[rgba(255,255,255,0.03)]">
               <tr>
                 <th className="text-left p-2">When</th>
                 <th className="text-left p-2">Tool</th>
@@ -117,7 +117,10 @@ export function Audit(): JSX.Element {
                 </tr>
               )}
               {visibleSlice.map((r) => (
-                <tr key={`${r.ts}-${r.tool}-${r.target}`} className="border-t border-bg-line">
+                <tr
+                  key={`${r.ts}-${r.tool}-${r.target}`}
+                  className="border-t border-[rgba(255,255,255,0.05)]"
+                >
                   <td className="p-2 tabular-nums">
                     {new Date(r.ts).toLocaleString(undefined, {
                       month: 'short',
@@ -129,7 +132,7 @@ export function Audit(): JSX.Element {
                   <td className="p-2">{r.tool}</td>
                   <td className="p-2 font-mono text-[11px]">{r.target}</td>
                   <td className="p-2">
-                    <span className="px-1.5 py-0.5 bg-bg-line rounded text-[10px]">
+                    <span className="px-1.5 py-0.5 bg-[rgba(255,255,255,0.08)] rounded text-[10px]">
                       {r.classification}
                     </span>
                   </td>

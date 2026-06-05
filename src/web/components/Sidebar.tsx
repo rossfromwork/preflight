@@ -3,9 +3,12 @@ import { StatusIndicator } from './StatusIndicator';
 import { useLiveAlerts } from '../hooks/useLiveAlerts';
 import type { AlertEvent } from '../store/liveStore';
 
-const NAV = [
+const NAV_OBSERVE = [
   { path: '/', label: 'Today', Icon: Home },
   { path: '/sessions', label: 'Sessions', Icon: Clock },
+] as const;
+
+const NAV_ANALYZE = [
   { path: '/history', label: 'History', Icon: TrendingUp },
   { path: '/audit', label: 'Audit', Icon: ShieldCheck },
 ] as const;
@@ -25,52 +28,87 @@ export interface SidebarProps {
 export function Sidebar({ currentPath, onNavigate, connected }: SidebarProps): JSX.Element {
   const { count: alertCount, maxSeverity } = useLiveAlerts();
 
+  function renderNavItem({
+    path,
+    label,
+    Icon,
+  }: {
+    path: string;
+    label: string;
+    Icon: typeof Home;
+  }) {
+    const active = currentPath === path;
+    const showBadge = path === '/' && alertCount > 0;
+    return (
+      <button
+        key={path}
+        type="button"
+        aria-current={active ? 'page' : undefined}
+        onClick={() => onNavigate(path)}
+        className={
+          'flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs text-left transition-all duration-150 ' +
+          (active
+            ? 'border-l-[3px] border-l-accent-green bg-[rgba(28,231,131,0.06)] text-ink-base font-medium pl-2.5'
+            : 'border-l-[3px] border-l-transparent text-[#8e9bae] hover:text-ink-base hover:bg-[rgba(255,255,255,0.03)]')
+        }
+      >
+        <Icon size={14} aria-hidden="true" focusable="false" />
+        <span>{label}</span>
+        {showBadge && (
+          <span
+            data-testid="alert-badge"
+            data-severity={maxSeverity ?? 'info'}
+            aria-label={`${alertCount > 99 ? '99+' : alertCount} firing ${alertCount === 1 ? 'alert' : 'alerts'}`}
+            className={
+              `ml-auto px-1.5 rounded text-[10px] font-semibold tabular-nums ` +
+              BADGE_TONE[maxSeverity ?? 'info']
+            }
+          >
+            {alertCount > 99 ? '99+' : alertCount}
+          </span>
+        )}
+      </button>
+    );
+  }
+
   return (
-    <aside className="w-44 bg-bg-panel border-r border-bg-line p-3 flex flex-col">
-      <div className="text-accent-cyan font-semibold text-sm tracking-wide">NR-AI</div>
-      <div className="text-ink-muted text-[10px] uppercase tracking-wider mt-0.5">
-        local · single-user
+    <aside className="w-52 bg-bg-deep border-r border-[rgba(255,255,255,0.06)] p-4 flex flex-col">
+      {/* Logo + brand */}
+      <div className="flex items-center gap-2 mb-1">
+        <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true">
+          <path
+            d="M2 10 L6 4 L10 14 L14 6 L18 10"
+            stroke="#1CE783"
+            strokeWidth="2"
+            fill="none"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+        <span className="text-ink-base font-semibold text-sm tracking-tight">observatory</span>
+      </div>
+      <div className="text-ink-muted text-[10px] tracking-wide mb-6">
+        local &middot; single-user
       </div>
 
-      <nav aria-label="Primary" className="mt-4 flex flex-col gap-0.5">
-        {NAV.map(({ path, label, Icon }) => {
-          const active = currentPath === path;
-          const showBadge = path === '/' && alertCount > 0;
-          return (
-            <button
-              key={path}
-              type="button"
-              aria-current={active ? 'page' : undefined}
-              onClick={() => onNavigate(path)}
-              className={
-                'flex items-center gap-2 px-2 py-1.5 rounded text-xs text-left ' +
-                (active
-                  ? 'bg-bg-line text-ink-base font-medium'
-                  : 'text-ink-subtle hover:text-ink-base')
-              }
-            >
-              <Icon size={14} aria-hidden="true" focusable="false" />
-              <span>{label}</span>
-              {showBadge && (
-                <span
-                  data-testid="alert-badge"
-                  data-severity={maxSeverity ?? 'info'}
-                  aria-label={`${alertCount > 99 ? '99+' : alertCount} firing ${alertCount === 1 ? 'alert' : 'alerts'}`}
-                  className={
-                    `ml-auto px-1.5 rounded text-[10px] font-semibold tabular-nums ` +
-                    BADGE_TONE[maxSeverity ?? 'info']
-                  }
-                >
-                  {alertCount > 99 ? '99+' : alertCount}
-                </span>
-              )}
-            </button>
-          );
-        })}
+      {/* OBSERVE section */}
+      <div className="text-[10px] font-medium text-ink-muted uppercase tracking-wider mb-2 px-2">
+        Observe
+      </div>
+      <nav aria-label="Observe" className="flex flex-col gap-0.5 mb-4">
+        {NAV_OBSERVE.map((item) => renderNavItem(item))}
       </nav>
 
-      <div className="mt-auto pt-3 border-t border-bg-line">
-        <div className="text-ink-muted text-[10px] uppercase tracking-wider mb-1">live</div>
+      {/* ANALYZE section */}
+      <div className="text-[10px] font-medium text-ink-muted uppercase tracking-wider mb-2 px-2">
+        Analyze
+      </div>
+      <nav aria-label="Analyze" className="flex flex-col gap-0.5">
+        {NAV_ANALYZE.map((item) => renderNavItem(item))}
+      </nav>
+
+      {/* Footer */}
+      <div className="mt-auto pt-4 border-t border-[rgba(255,255,255,0.06)]">
         {connected ? (
           <StatusIndicator tone="good" label="connected" />
         ) : (

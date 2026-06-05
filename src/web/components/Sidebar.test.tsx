@@ -79,10 +79,10 @@ describe('Sidebar', () => {
     }
   });
 
-  it('labels the nav landmark as "Primary"', () => {
+  it('labels the nav landmarks as "Observe" and "Analyze"', () => {
     render(<Sidebar currentPath="/" onNavigate={() => {}} connected={true} />);
-    const nav = screen.getByRole('navigation', { name: 'Primary' });
-    expect(nav).toBeInTheDocument();
+    expect(screen.getByRole('navigation', { name: 'Observe' })).toBeInTheDocument();
+    expect(screen.getByRole('navigation', { name: 'Analyze' })).toBeInTheDocument();
   });
 
   it('does not render an alert badge when no alerts are firing', () => {
