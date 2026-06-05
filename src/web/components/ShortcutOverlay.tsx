@@ -8,6 +8,7 @@ interface ShortcutOverlayProps {
 
 const shortcuts = [
   { keys: ['?'], description: 'Show this help' },
+  { keys: ['t'], description: 'Toggle light/dark mode' },
   { keys: ['g', 'h'], description: 'Go to Today' },
   { keys: ['g', 's'], description: 'Go to Sessions' },
   { keys: ['g', 'i'], description: 'Go to History' },

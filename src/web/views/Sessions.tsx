@@ -200,13 +200,13 @@ export function Sessions(): JSX.Element {
   return (
     <section className="grid grid-cols-[260px_1fr] gap-3 h-full">
       <aside className="glass-card overflow-hidden flex flex-col">
-        <header className="p-2 border-b border-[rgba(255,255,255,0.06)]">
+        <header className="p-2 border-b border-border-subtle">
           <div className="flex items-center justify-between">
             <h2 className="text-xs uppercase tracking-wider text-ink-muted">Sessions</h2>
             <select
               value={sortKey}
               onChange={(e) => setSortKey(e.target.value as SortKey)}
-              className="text-[10px] bg-[rgba(255,255,255,0.05)] border border-[rgba(255,255,255,0.1)] rounded px-1.5 py-0.5 text-ink-subtle"
+              className="text-[10px] bg-surface-5 border border-border-medium rounded px-1.5 py-0.5 text-ink-subtle"
             >
               <option value="date">Newest</option>
               <option value="cost">Cost</option>
@@ -231,7 +231,7 @@ export function Sessions(): JSX.Element {
                 type="button"
                 onClick={() => handleSessionClick(r.sessionId)}
                 className={
-                  'block w-full text-left p-2 border-b border-[rgba(255,255,255,0.06)] text-xs hover:bg-bg-line ' +
+                  'block w-full text-left p-2 border-b border-border-subtle text-xs hover:bg-bg-line ' +
                   (selectedId === r.sessionId ? 'bg-bg-line' : '')
                 }
               >
@@ -262,7 +262,7 @@ export function Sessions(): JSX.Element {
               `qk.sessionsList(50)` query above; bump both together if the
               cap ever changes. */}
           {rows.length >= SESSIONS_PAGE_SIZE && (
-            <div className="p-2 text-[10px] text-ink-muted text-center border-t border-[rgba(255,255,255,0.06)]">
+            <div className="p-2 text-[10px] text-ink-muted text-center border-t border-border-subtle">
               Showing {SESSIONS_PAGE_SIZE} most recent sessions.
             </div>
           )}
@@ -360,19 +360,19 @@ function SessionTimeline({ data, isLive }: { data: SessionDetail; isLive: boolea
 
       <div className="grid grid-cols-3 gap-2 mb-4 text-xs">
         {data.model && (
-          <div className="bg-[rgba(255,255,255,0.03)] rounded-lg p-2.5">
+          <div className="bg-surface-3 rounded-lg p-2.5">
             <div className="text-ink-muted text-[10px] uppercase">Model</div>
             <div className="font-mono">{data.model}</div>
           </div>
         )}
         {data.estimatedCostUsd != null && (
-          <div className="bg-[rgba(255,255,255,0.03)] rounded-lg p-2.5">
+          <div className="bg-surface-3 rounded-lg p-2.5">
             <div className="text-ink-muted text-[10px] uppercase">Cost</div>
             <div className="tabular-nums">${data.estimatedCostUsd.toFixed(3)}</div>
           </div>
         )}
         {data.outcome && (
-          <div className="bg-[rgba(255,255,255,0.03)] rounded-lg p-2.5">
+          <div className="bg-surface-3 rounded-lg p-2.5">
             <div className="text-ink-muted text-[10px] uppercase">Outcome</div>
             <div>{data.outcome}</div>
           </div>
@@ -382,7 +382,7 @@ function SessionTimeline({ data, isLive }: { data: SessionDetail; isLive: boolea
       {(data.qualityProxy || data.toolSelectionScore) && (
         <div className="grid grid-cols-2 gap-3 mb-4">
           {data.qualityProxy && (
-            <div className="bg-[rgba(255,255,255,0.03)] rounded-lg p-3">
+            <div className="bg-surface-3 rounded-lg p-3">
               <div className="text-[10px] text-ink-muted uppercase tracking-wider mb-2">
                 Session Quality
               </div>
@@ -417,7 +417,7 @@ function SessionTimeline({ data, isLive }: { data: SessionDetail; isLive: boolea
             </div>
           )}
           {data.toolSelectionScore && (
-            <div className="bg-[rgba(255,255,255,0.03)] rounded-lg p-3">
+            <div className="bg-surface-3 rounded-lg p-3">
               <div className="text-[10px] text-ink-muted uppercase tracking-wider mb-2">
                 Tool Selection
               </div>
@@ -449,7 +449,7 @@ function SessionTimeline({ data, isLive }: { data: SessionDetail; isLive: boolea
                   <span className="w-28 text-ink-subtle truncate" title={tool}>
                     {shortToolName(tool)}
                   </span>
-                  <div className="flex-1 h-3 bg-[rgba(255,255,255,0.04)] relative rounded">
+                  <div className="flex-1 h-3 bg-surface-3 relative rounded">
                     <div
                       className={`h-3 rounded ${toolBarColor(tool)}`}
                       style={{ width: `${pct}%` }}
@@ -584,7 +584,7 @@ function InlineReplay({ sessionId, isLive }: { sessionId: string; isLive: boolea
   return (
     <div className="mt-4">
       {segments.length > 0 && (
-        <div className="bg-[rgba(255,179,36,0.05)] border border-accent-amber/30 rounded-xl p-2.5 mb-3">
+        <div className="bg-accent-amber/5 border border-accent-amber/30 rounded-xl p-2.5 mb-3">
           <div className="text-[11px] font-semibold text-accent-amber mb-1.5">
             {segments.length} anti-pattern{segments.length > 1 ? 's' : ''} detected
           </div>
@@ -644,8 +644,8 @@ function InlineReplay({ sessionId, isLive }: { sessionId: string; isLive: boolea
                 : 'border-l-transparent';
               const bgColor = seg
                 ? seg.severity === 'critical'
-                  ? 'bg-[rgba(255,76,76,0.04)]'
-                  : 'bg-[rgba(255,178,36,0.04)]'
+                  ? 'bg-accent-red/5'
+                  : 'bg-accent-amber/5'
                 : '';
               const elapsed = entry.timestamp - firstTs;
 

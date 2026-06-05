@@ -3,9 +3,14 @@ import { useEffect, useRef } from 'react';
 interface ShortcutConfig {
   readonly navigate: (path: string) => void;
   readonly onToggleHelp: () => void;
+  readonly onToggleTheme?: () => void;
 }
 
-export function useKeyboardShortcuts({ navigate, onToggleHelp }: ShortcutConfig): void {
+export function useKeyboardShortcuts({
+  navigate,
+  onToggleHelp,
+  onToggleTheme,
+}: ShortcutConfig): void {
   const pendingRef = useRef<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -23,6 +28,16 @@ export function useKeyboardShortcuts({ navigate, onToggleHelp }: ShortcutConfig)
 
       // Handle pending 'g' prefix sequence
       if (pendingRef.current === 'g') {
+        // g→g restarts the prefix window rather than consuming the second 'g',
+        // so that a double-tap still leaves the user in a valid prefix state.
+        if (key === 'g') {
+          if (timerRef.current) clearTimeout(timerRef.current);
+          timerRef.current = setTimeout(() => {
+            pendingRef.current = null;
+          }, 500);
+          return;
+        }
+
         pendingRef.current = null;
         if (timerRef.current) {
           clearTimeout(timerRef.current);
@@ -38,8 +53,10 @@ export function useKeyboardShortcuts({ navigate, onToggleHelp }: ShortcutConfig)
         if (routes[key]) {
           e.preventDefault();
           navigate(routes[key]);
-          return;
         }
+        // Always exit after a g-prefix sequence — matched or not — so
+        // unmatched keys (e.g. g→t) don't fall through to single-key handlers.
+        return;
       }
 
       // Start 'g' prefix
@@ -56,6 +73,10 @@ export function useKeyboardShortcuts({ navigate, onToggleHelp }: ShortcutConfig)
         e.preventDefault();
         onToggleHelp();
       }
+      if (key === 't' && onToggleTheme) {
+        e.preventDefault();
+        onToggleTheme();
+      }
     }
 
     document.addEventListener('keydown', handleKeyDown);
@@ -63,5 +84,5 @@ export function useKeyboardShortcuts({ navigate, onToggleHelp }: ShortcutConfig)
       document.removeEventListener('keydown', handleKeyDown);
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, [navigate, onToggleHelp]);
+  }, [navigate, onToggleHelp, onToggleTheme]);
 }

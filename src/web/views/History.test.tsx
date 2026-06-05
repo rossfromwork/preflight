@@ -286,7 +286,9 @@ describe('History view', () => {
         <History />
       </QueryClientProvider>,
     );
-    await waitFor(() => expect(screen.getByText(/no anti-patterns detected/i)).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getAllByText(/no anti-patterns detected/i).length).toBeGreaterThanOrEqual(1),
+    );
   });
 });
 

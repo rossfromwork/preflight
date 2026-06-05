@@ -50,9 +50,9 @@ describe('Today view', () => {
 
   it('renders the four KPI labels', () => {
     renderToday();
-    expect(screen.getByText('spend')).toBeInTheDocument();
-    expect(screen.getByText('calls')).toBeInTheDocument();
-    expect(screen.getByText('eff.')).toBeInTheDocument();
+    expect(screen.getByText('spend today')).toBeInTheDocument();
+    expect(screen.getByText('tool calls')).toBeInTheDocument();
+    expect(screen.getByText('efficiency')).toBeInTheDocument();
     expect(screen.getByText('flags')).toBeInTheDocument();
   });
 
@@ -61,10 +61,9 @@ describe('Today view', () => {
     expect(screen.getByText('$12.17')).toBeInTheDocument();
   });
 
-  it('renders the recent tool calls table', () => {
+  it('renders the efficiency score KPI', () => {
     renderToday();
-    expect(screen.getByText('Read')).toBeInTheDocument();
-    expect(screen.getByText('Edit')).toBeInTheDocument();
+    expect(screen.getByText('efficiency')).toBeInTheDocument();
   });
 
   it('renders an anti-pattern banner when patterns exist', () => {

@@ -1,7 +1,8 @@
-import { Home, Clock, TrendingUp, ShieldCheck } from 'lucide-react';
+import { Home, Clock, TrendingUp, ShieldCheck, Sun, Moon } from 'lucide-react';
 import { StatusIndicator } from './StatusIndicator';
 import { useLiveAlerts } from '../hooks/useLiveAlerts';
 import type { AlertEvent } from '../store/liveStore';
+import type { Theme } from '../hooks/useTheme';
 
 const NAV_OBSERVE = [
   { path: '/', label: 'Today', Icon: Home },
@@ -23,9 +24,17 @@ export interface SidebarProps {
   readonly currentPath: string;
   readonly onNavigate: (path: string) => void;
   readonly connected: boolean;
+  readonly theme: Theme;
+  readonly onToggleTheme: () => void;
 }
 
-export function Sidebar({ currentPath, onNavigate, connected }: SidebarProps): JSX.Element {
+export function Sidebar({
+  currentPath,
+  onNavigate,
+  connected,
+  theme,
+  onToggleTheme,
+}: SidebarProps): JSX.Element {
   const { count: alertCount, maxSeverity } = useLiveAlerts();
 
   function renderNavItem({
@@ -49,7 +58,7 @@ export function Sidebar({ currentPath, onNavigate, connected }: SidebarProps): J
           'flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs text-left transition-all duration-150 ' +
           (active
             ? 'border-l-[3px] border-l-accent-green bg-[rgba(28,231,131,0.06)] text-ink-base font-medium pl-2.5'
-            : 'border-l-[3px] border-l-transparent text-[#8e9bae] hover:text-ink-base hover:bg-[rgba(255,255,255,0.03)]')
+            : 'border-l-[3px] border-l-transparent text-ink-subtle hover:text-ink-base hover:bg-surface-3')
         }
       >
         <Icon size={14} aria-hidden="true" focusable="false" />
@@ -72,17 +81,18 @@ export function Sidebar({ currentPath, onNavigate, connected }: SidebarProps): J
   }
 
   return (
-    <aside className="w-52 bg-bg-deep border-r border-[rgba(255,255,255,0.06)] p-4 flex flex-col">
+    <aside className="w-52 bg-bg-deep border-r border-border-subtle p-4 flex flex-col">
       {/* Logo + brand */}
       <div className="flex items-center gap-2 mb-1">
         <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true">
           <path
             d="M2 10 L6 4 L10 14 L14 6 L18 10"
-            stroke="#1CE783"
+            stroke="currentColor"
             strokeWidth="2"
             fill="none"
             strokeLinecap="round"
             strokeLinejoin="round"
+            className="text-accent-green"
           />
         </svg>
         <span className="text-ink-base font-semibold text-sm tracking-tight">observatory</span>
@@ -108,12 +118,20 @@ export function Sidebar({ currentPath, onNavigate, connected }: SidebarProps): J
       </nav>
 
       {/* Footer */}
-      <div className="mt-auto pt-4 border-t border-[rgba(255,255,255,0.06)]">
+      <div className="mt-auto pt-4 border-t border-border-subtle flex items-center justify-between">
         {connected ? (
           <StatusIndicator tone="good" label="connected" />
         ) : (
           <StatusIndicator tone="warn" label="reconnecting" />
         )}
+        <button
+          type="button"
+          onClick={onToggleTheme}
+          aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          className="p-1.5 rounded-lg text-ink-muted hover:text-ink-base hover:bg-surface-5 transition-colors"
+        >
+          {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
+        </button>
       </div>
     </aside>
   );

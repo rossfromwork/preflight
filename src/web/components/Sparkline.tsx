@@ -13,7 +13,7 @@ export function Sparkline({
   values,
   width = 280,
   height = 50,
-  stroke = '#1CE783',
+  stroke = 'var(--color-accent-green)',
   ariaLabel,
   animate,
 }: SparklineProps): JSX.Element | null {

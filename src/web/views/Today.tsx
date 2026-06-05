@@ -360,7 +360,7 @@ function ToolSelectionPanel(): JSX.Element {
       <div className="text-[10px] text-ink-muted uppercase tracking-wider mb-2">
         Today · Tool Selection
       </div>
-      {!data || data.totalCalls === 0 ? (
+      {!data || Array.isArray(data) || data.totalCalls === 0 ? (
         <EmptyState
           icon="radar"
           title="Waiting for tool calls"

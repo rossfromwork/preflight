@@ -6,9 +6,9 @@ import { formatNumber } from '../lib/format';
 type Severity = AlertEvent['severity'];
 
 const SEVERITY_BG: Record<Severity, string> = {
-  info: 'bg-[rgba(255,255,255,0.03)] border-[rgba(255,255,255,0.08)]',
-  warning: 'bg-[rgba(255,178,36,0.05)] border-accent-amber/40',
-  critical: 'bg-[rgba(255,76,76,0.06)] border-accent-red/50',
+  info: 'bg-surface-3 border-surface-8',
+  warning: 'bg-accent-amber/5 border-accent-amber/40',
+  critical: 'bg-accent-red/5 border-accent-red/50',
 };
 
 const SEVERITY_TEXT: Record<Severity, string> = {

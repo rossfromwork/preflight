@@ -68,21 +68,28 @@ interface PersonalCoachInsufficient {
 
 type PersonalCoachResult = PersonalCoachOk | PersonalCoachInsufficient;
 
-const TICK_STYLE = { fill: '#8e9bae', fontSize: 10 };
-const GRID_STROKE = 'rgba(255, 255, 255, 0.06)';
-const ACCENT = '#1CE783';
-const ACCENT_AMBER = '#FFB224';
-const ACCENT_GREEN = '#1CE783';
-const ACCENT_PURPLE = '#9945FF';
-const ACCENT_BLUE = '#4A9EFF';
-const ACCENT_TEAL = '#36D8B7';
+const TICK_STYLE = { fill: 'var(--color-ink-muted)', fontSize: 10 };
+const GRID_STROKE = 'var(--color-border-subtle)';
+const TOOLTIP_STYLE = {
+  background: 'var(--color-bg-elevated)',
+  border: '1px solid var(--color-border-medium)',
+  borderRadius: 8,
+  fontSize: 12,
+  color: 'var(--color-ink-base)',
+};
+const ACCENT = 'var(--color-accent-green)';
+const ACCENT_AMBER = 'var(--color-accent-amber)';
+const ACCENT_GREEN = 'var(--color-accent-green)';
+const ACCENT_PURPLE = 'var(--color-accent-purple)';
+const ACCENT_BLUE = 'var(--color-accent-blue)';
+const ACCENT_TEAL = 'var(--color-accent-teal)';
 
 function toolFillColor(toolName: string): string {
   if (toolName === 'Read') return ACCENT_BLUE;
   if (toolName === 'Edit' || toolName === 'Write') return ACCENT_GREEN;
   if (toolName === 'Bash') return ACCENT_PURPLE;
   if (toolName === 'Agent') return ACCENT_TEAL;
-  return '#8e9bae';
+  return 'var(--color-ink-muted)';
 }
 
 function outcomeFillColor(outcome: string): string {
@@ -161,15 +168,7 @@ export function History(): JSX.Element {
                   tickFormatter={shortMonthDay}
                 />
                 <YAxis tick={TICK_STYLE} stroke={GRID_STROKE} domain={[0, 100]} unit="%" />
-                <Tooltip
-                  contentStyle={{
-                    background: 'rgba(22, 27, 34, 0.9)',
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    borderRadius: 8,
-                    backdropFilter: 'blur(8px)',
-                    fontSize: 12,
-                  }}
-                />
+                <Tooltip contentStyle={TOOLTIP_STYLE} />
                 <Area
                   type="monotone"
                   dataKey="efficiency"
@@ -196,14 +195,7 @@ export function History(): JSX.Element {
                 <CartesianGrid stroke={GRID_STROKE} strokeDasharray="3 3" />
                 <XAxis dataKey="day" tick={TICK_STYLE} stroke={GRID_STROKE} />
                 <YAxis tick={TICK_STYLE} stroke={GRID_STROKE} unit="$" />
-                <Tooltip
-                  contentStyle={{
-                    background: 'rgba(22, 27, 34, 0.9)',
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    borderRadius: 8,
-                    fontSize: 12,
-                  }}
-                />
+                <Tooltip contentStyle={TOOLTIP_STYLE} />
                 <Bar dataKey="cost" fill="url(#costGradient)" radius={[3, 3, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
@@ -233,14 +225,7 @@ export function History(): JSX.Element {
                     stroke={GRID_STROKE}
                     width={110}
                   />
-                  <Tooltip
-                    contentStyle={{
-                      background: 'rgba(22, 27, 34, 0.9)',
-                      border: '1px solid rgba(255,255,255,0.1)',
-                      borderRadius: 8,
-                      fontSize: 12,
-                    }}
-                  />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} />
                   <Bar dataKey="totalCost" radius={[0, 3, 3, 0]}>
                     {outcomeData.map((entry) => (
                       <Cell
@@ -281,14 +266,7 @@ export function History(): JSX.Element {
                     tickFormatter={shortMonthDay}
                   />
                   <YAxis tick={TICK_STYLE} stroke={GRID_STROKE} />
-                  <Tooltip
-                    contentStyle={{
-                      background: 'rgba(22, 27, 34, 0.9)',
-                      border: '1px solid rgba(255,255,255,0.1)',
-                      borderRadius: 8,
-                      fontSize: 12,
-                    }}
-                  />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} />
                   <Bar dataKey="count" fill="url(#antiPatternGradient)" radius={[3, 3, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
@@ -367,14 +345,7 @@ export function History(): JSX.Element {
                     stroke={GRID_STROKE}
                     width={120}
                   />
-                  <Tooltip
-                    contentStyle={{
-                      background: 'rgba(22, 27, 34, 0.9)',
-                      border: '1px solid rgba(255,255,255,0.1)',
-                      borderRadius: 8,
-                      fontSize: 12,
-                    }}
-                  />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} />
                   <Bar dataKey="count" radius={[0, 3, 3, 0]}>
                     {topTools.map((entry) => (
                       <Cell key={entry.tool} fill={toolFillColor(entry.tool)} fillOpacity={0.8} />

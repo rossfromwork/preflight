@@ -6,6 +6,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { ShortcutOverlay } from './components/ShortcutOverlay';
 import { useLiveEvents } from './hooks/useLiveEvents';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
+import { useTheme } from './hooks/useTheme';
 import { useLiveStore } from './store/liveStore';
 import { Today } from './views/Today';
 import { Sessions } from './views/Sessions';
@@ -17,17 +18,24 @@ export function App(): JSX.Element {
   const connected = useLiveStore((s) => s.connected);
   const [location, navigate] = useLocation();
   const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
+  const { theme, toggleTheme } = useTheme();
 
   const toggleHelp = useCallback(() => setShortcutHelpOpen((v) => !v), []);
 
-  useKeyboardShortcuts({ navigate, onToggleHelp: toggleHelp });
+  useKeyboardShortcuts({ navigate, onToggleHelp: toggleHelp, onToggleTheme: toggleTheme });
 
   return (
     <>
       <div className="flex flex-col h-full mesh-bg">
         <AlertBannerStack />
         <div className="flex flex-1 min-h-0">
-          <Sidebar currentPath={location} onNavigate={navigate} connected={connected} />
+          <Sidebar
+            currentPath={location}
+            onNavigate={navigate}
+            connected={connected}
+            theme={theme}
+            onToggleTheme={toggleTheme}
+          />
           <main className="flex-1 overflow-auto p-6">
             <ErrorBoundary resetKey={location}>
               <Switch>
