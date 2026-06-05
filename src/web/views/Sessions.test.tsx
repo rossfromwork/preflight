@@ -169,7 +169,9 @@ describe('Sessions view', () => {
     renderSessions(SAMPLE_LIST, { s1: detail });
     await waitFor(() => expect(screen.getByText(/s1/)).toBeInTheDocument());
     fireEvent.click(screen.getAllByText(/s1/)[0]);
-    await waitFor(() => expect(screen.getByText(/s1-abcde · 5 calls · 5s/)).toBeInTheDocument());
+    // Header is now split across two spans: session ID and call/duration info
+    await waitFor(() => expect(screen.getByText(/s1-abcde/)).toBeInTheDocument());
+    expect(screen.getByText(/· 5 calls · 5s/)).toBeInTheDocument();
   });
 });
 

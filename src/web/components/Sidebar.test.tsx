@@ -119,7 +119,7 @@ describe('Sidebar', () => {
       />,
     );
     const icons = container.querySelectorAll('nav button svg');
-    expect(icons.length).toBe(4);
+    expect(icons.length).toBe(5);
     for (const svg of Array.from(icons)) {
       expect(svg.getAttribute('aria-hidden')).toBe('true');
     }

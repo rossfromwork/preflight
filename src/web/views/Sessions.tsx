@@ -237,22 +237,20 @@ export function Sessions(): JSX.Element {
                   (selectedId === r.sessionId ? 'bg-bg-line' : '')
                 }
               >
-                <div className="flex justify-between items-center">
-                  <span className="flex items-center gap-1.5">
-                    <span className="font-mono text-ink-base">
-                      {r.sessionName || r.sessionId.slice(0, 8)}
-                    </span>
-                    {isLive && (
-                      <span className="inline-flex items-center gap-0.5 bg-accent-cyan/20 text-accent-cyan text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded">
-                        <span className="w-1.5 h-1.5 rounded-full bg-accent-cyan animate-pulse" />
-                        live
-                      </span>
-                    )}
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <span className="font-mono text-ink-base truncate">
+                    {r.sessionName || r.sessionId.slice(0, 8)}
                   </span>
-                  <span className="text-ink-muted">{r.startTime ? fmtTime(r.startTime) : '—'}</span>
+                  {isLive && (
+                    <span className="shrink-0 inline-flex items-center gap-0.5 bg-accent-cyan/20 text-accent-cyan text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded">
+                      <span className="w-1.5 h-1.5 rounded-full bg-accent-cyan animate-pulse" />
+                      live
+                    </span>
+                  )}
                 </div>
                 <div className="flex justify-between mt-1 text-ink-subtle text-[11px]">
                   <span>{r.toolCallCount ?? 0} calls</span>
+                  <span className="text-ink-muted">{r.startTime ? fmtTime(r.startTime) : '—'}</span>
                   <span>
                     {r.estimatedCostUsd != null ? `$${r.estimatedCostUsd.toFixed(2)}` : '—'}
                   </span>
@@ -338,9 +336,15 @@ function SessionTimeline({ data, isLive }: { data: SessionDetail; isLive: boolea
     <div>
       <div className="flex items-baseline justify-between mb-3">
         <div>
-          <h2 className="text-xs uppercase tracking-wider text-ink-muted flex items-center gap-2">
-            {data.sessionName || data.sessionId.slice(0, 8)} · {totalCalls} calls
-            {durationSec !== null && ` · ${durationSec}s`}
+          <h2 className="text-xs tracking-wider text-ink-muted flex items-center gap-2">
+            <span
+              className={data.sessionName ? 'font-medium text-ink-base' : 'uppercase font-mono'}
+            >
+              {data.sessionName || data.sessionId.slice(0, 8)}
+            </span>
+            <span className="uppercase">
+              · {totalCalls} calls{durationSec !== null ? ` · ${durationSec}s` : ''}
+            </span>
             {isLive && (
               <span className="inline-flex items-center gap-0.5 bg-accent-cyan/20 text-accent-cyan text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded">
                 <span className="w-1.5 h-1.5 rounded-full bg-accent-cyan animate-pulse" />
