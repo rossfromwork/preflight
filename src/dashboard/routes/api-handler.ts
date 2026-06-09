@@ -603,6 +603,11 @@ export function createApiHandler(
     jsonOk(res, deps.latencyTracker.getMetrics());
   });
 
+  routes.set('GET /api/model-usage', (_req, res) => {
+    if (!deps.modelUsageTracker) return unavailable(res, 'modelUsageTracker');
+    jsonOk(res, deps.modelUsageTracker.getMetrics());
+  });
+
   routes.set('GET /api/cost-per-outcome', (req, res) => {
     if (!deps.sessionStore?.loadAllSessions)
       return unavailable(res, 'sessionStore.loadAllSessions');

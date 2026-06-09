@@ -73,6 +73,8 @@ export interface SettingsPatch {
   };
 }
 
+export const fetchModelUsage = (): Promise<unknown> => getJson<unknown>('/api/model-usage');
+
 export const fetchSettings = (): Promise<unknown> => getJson<unknown>('/api/settings');
 
 export const patchSettings = (body: SettingsPatch): Promise<unknown> =>
@@ -116,5 +118,6 @@ export const qk = {
   concurrencyHistory: (days: number) => ['concurrency', 'history', days] as const,
   activityHeatmap: (view: string) => ['activity-heatmap', view] as const,
   context: ['context'] as const,
+  modelUsage: ['model-usage'] as const,
   settings: ['settings'] as const,
 };

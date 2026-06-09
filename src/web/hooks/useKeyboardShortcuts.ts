@@ -28,8 +28,8 @@ export function useKeyboardShortcuts({
 
       // Handle pending 'g' prefix sequence
       if (pendingRef.current === 'g') {
-        // g→g restarts the prefix window rather than consuming the second 'g',
-        // so that a double-tap still leaves the user in a valid prefix state.
+        // g→g restarts the prefix window so an accidental double-tap doesn't
+        // navigate anywhere — the user stays in prefix mode for the next key.
         if (key === 'g') {
           if (timerRef.current) clearTimeout(timerRef.current);
           timerRef.current = setTimeout(() => {
@@ -49,6 +49,9 @@ export function useKeyboardShortcuts({
           s: '/sessions',
           i: '/history',
           a: '/audit',
+          v: '/git',
+          e: '/settings',
+          l: '/alerts',
         };
         if (routes[key]) {
           e.preventDefault();

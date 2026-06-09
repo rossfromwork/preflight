@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'wouter';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { fetchBudget, fetchSettings, patchSettings, postDigestSend, qk } from '../api/client';
 import type { SettingsPatch } from '../api/client';
@@ -216,7 +217,11 @@ export function Alerts(): JSX.Element {
               budget.daily.budgetUsd === null &&
               budget.weekly.budgetUsd === null && (
                 <p className="text-xs text-ink-muted mt-2">
-                  No budget caps configured. Set limits in Settings to enable warnings.
+                  No budget caps configured.{' '}
+                  <Link href="/settings" className="text-accent-green hover:underline">
+                    Set limits in Settings
+                  </Link>{' '}
+                  to enable warnings.
                 </p>
               )}
           </>

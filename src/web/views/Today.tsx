@@ -21,6 +21,8 @@ import {
   fetchToolSelectionScore,
   fetchConcurrency,
   fetchActivityHeatmap,
+  fetchLatency,
+  fetchModelUsage,
   NotFoundError,
   qk,
 } from '../api/client';
@@ -316,6 +318,8 @@ export function Today(): JSX.Element {
           <AnimatedCard index={3} className="grid grid-cols-2 gap-3 mb-3">
             <QualityProxyPanel />
             <ToolSelectionPanel />
+            <LatencyPanel />
+            <ModelUsagePanel />
           </AnimatedCard>
 
           <AnimatedCard index={4}>
@@ -458,6 +462,143 @@ function ToolSelectionPanel(): JSX.Element {
             fetching large outputs never referenced.
           </div>
         </>
+      )}
+    </div>
+  );
+}
+
+// --- Latency Panel ---
+
+interface LatencyPercentiles {
+  readonly p50: number;
+  readonly p95: number;
+  readonly p99: number;
+  readonly count: number;
+}
+
+interface LatencyMetrics {
+  readonly overall: LatencyPercentiles | null;
+  readonly byTool: Readonly<Record<string, LatencyPercentiles | null>>;
+  readonly slowestCalls: ReadonlyArray<{ toolName: string; durationMs: number }>;
+}
+
+function LatencyPanel(): JSX.Element {
+  const { data } = useQuery<LatencyMetrics>({
+    queryKey: qk.latency,
+    queryFn: () => fetchLatency() as Promise<LatencyMetrics>,
+    refetchInterval: QUALITY_REFETCH_MS,
+  });
+
+  const topTools = data
+    ? Object.entries(data.byTool)
+        .filter(
+          (entry): entry is [string, LatencyPercentiles] => entry[1] !== null && entry[1].count > 0,
+        )
+        .sort((a, b) => b[1].p95 - a[1].p95)
+        .slice(0, 4)
+    : [];
+
+  return (
+    <div className="glass-card p-3">
+      <div className="text-[10px] text-ink-muted uppercase tracking-wider mb-2">
+        Today · Latency (ms)
+      </div>
+      {!data || !data.overall ? (
+        <EmptyState
+          icon="clock"
+          title="Waiting for tool calls"
+          subtitle="Latency percentiles appear after tool calls complete."
+        />
+      ) : (
+        <>
+          <div className="flex gap-4 text-xs mb-2">
+            <div>
+              <span className="text-ink-muted">p50 </span>
+              <span className="text-ink-base tabular-nums">{data.overall.p50}</span>
+            </div>
+            <div>
+              <span className="text-ink-muted">p95 </span>
+              <span className="text-ink-base tabular-nums">{data.overall.p95}</span>
+            </div>
+            <div>
+              <span className="text-ink-muted">p99 </span>
+              <span className="text-ink-base tabular-nums">{data.overall.p99}</span>
+            </div>
+          </div>
+          {topTools.length > 0 && (
+            <div className="space-y-1">
+              {topTools.map(([tool, p]) => (
+                <div key={tool} className="flex items-center gap-2 text-xs">
+                  <span className="text-ink-muted truncate w-28 shrink-0">
+                    {shortToolName(tool)}
+                  </span>
+                  <span className="tabular-nums text-ink-subtle">{p.p95}ms p95</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// --- Model Usage Panel ---
+
+interface ModelStats {
+  readonly requestCount: number;
+  readonly totalCostUsd: number;
+  readonly costPerOutputToken: number | null;
+}
+
+interface ModelUsageMetrics {
+  readonly byModel: Readonly<Record<string, ModelStats>>;
+  readonly mostUsedModel: string | null;
+  readonly mostEfficientModel: string | null;
+}
+
+function ModelUsagePanel(): JSX.Element {
+  const { data } = useQuery<ModelUsageMetrics>({
+    queryKey: qk.modelUsage,
+    queryFn: () => fetchModelUsage() as Promise<ModelUsageMetrics>,
+    refetchInterval: QUALITY_REFETCH_MS,
+  });
+
+  const models = data
+    ? Object.entries(data.byModel)
+        .filter(([, s]) => s.requestCount > 0)
+        .sort((a, b) => b[1].totalCostUsd - a[1].totalCostUsd)
+        .slice(0, 4)
+    : [];
+
+  return (
+    <div className="glass-card p-3">
+      <div className="text-[10px] text-ink-muted uppercase tracking-wider mb-2">
+        Today · Model Usage
+      </div>
+      {!data || models.length === 0 ? (
+        <EmptyState
+          icon="radar"
+          title="No model data yet"
+          subtitle="Model cost breakdown appears after tool calls with token data."
+        />
+      ) : (
+        <div className="space-y-1.5">
+          {models.map(([model, s]) => (
+            <div key={model} className="flex items-center justify-between text-xs gap-2">
+              <span className="text-ink-muted truncate">{model}</span>
+              <div className="flex gap-3 shrink-0 tabular-nums">
+                <span className="text-ink-subtle">{s.requestCount}req</span>
+                <span className="text-ink-base">${s.totalCostUsd.toFixed(4)}</span>
+              </div>
+            </div>
+          ))}
+          {data?.mostEfficientModel && (
+            <div className="text-[10px] text-accent-green mt-1">
+              Most efficient: {data.mostEfficientModel}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

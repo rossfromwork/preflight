@@ -13,6 +13,9 @@ const shortcuts = [
   { keys: ['g', 's'], description: 'Go to Sessions' },
   { keys: ['g', 'i'], description: 'Go to History' },
   { keys: ['g', 'a'], description: 'Go to Audit' },
+  { keys: ['g', 'v'], description: 'Go to Git Efficiency' },
+  { keys: ['g', 'e'], description: 'Go to Settings' },
+  { keys: ['g', 'l'], description: 'Go to Alerts' },
   { keys: ['Esc'], description: 'Close overlay' },
 ];
 
