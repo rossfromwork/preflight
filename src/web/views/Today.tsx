@@ -54,9 +54,7 @@ interface HeatmapApiResponse {
   readonly maxCount: number;
 }
 
-// Minimal view of the /api/session/current payload. F-050 added
-// efficiencyScore; the model-health card consumes toolSuccessRate +
-// toolCallCount + toolErrorCount from the same endpoint.
+// Minimal view of the /api/session/current payload. F-050 added efficiencyScore.
 interface SessionCurrentApiResponse {
   readonly efficiencyScore?: number | null;
   readonly toolSuccessRate?: number | null;
@@ -131,7 +129,7 @@ export function Today(): JSX.Element {
     queryKey: qk.sessionsList(200),
     queryFn: () => fetchSessionsList(200) as Promise<SessionSummary[]>,
   });
-  const { data: apiAntiPatterns } = useQuery<SessionAntiPattern[]>({
+  const { data: apiAntiPatterns, isPending: antiPatternsPending } = useQuery<SessionAntiPattern[]>({
     queryKey: qk.antiPatterns,
     queryFn: () => fetchAntiPatterns() as Promise<SessionAntiPattern[]>,
   });
@@ -145,22 +143,6 @@ export function Today(): JSX.Element {
     queryFn: () => fetchActivityHeatmap('today') as Promise<HeatmapApiResponse>,
     refetchInterval: 30_000,
   });
-
-  const modelHealth = useMemo(
-    () =>
-      computeModelHealth(
-        costApi?.cost?.model ?? null,
-        sessionCurrent?.toolSuccessRate ?? null,
-        sessionCurrent?.toolErrorCount ?? 0,
-        todaySessions ?? [],
-      ),
-    [
-      costApi?.cost?.model,
-      sessionCurrent?.toolSuccessRate,
-      sessionCurrent?.toolErrorCount,
-      todaySessions,
-    ],
-  );
 
   const persistedTodaySpend = useMemo(
     () => computeTodaySpend(todaySessions ?? []),
@@ -208,6 +190,14 @@ export function Today(): JSX.Element {
           ? 'mixed signals'
           : 'needs attention';
 
+  const noActivityToday =
+    !spendLoading &&
+    !sessionsPending &&
+    !antiPatternsPending &&
+    calls === 0 &&
+    todayTotal === 0 &&
+    flagsCount === 0;
+
   return (
     <section>
       <GeoBanner />
@@ -216,122 +206,143 @@ export function Today(): JSX.Element {
         <span className="text-xs text-ink-muted">{headerTimestamp}</span>
       </header>
 
-      <AnimatedCard index={0} className="glass-card glow-green p-5 mb-4">
-        <div className="grid grid-cols-4 gap-6">
-          <Kpi
-            label="efficiency"
-            hero
-            value={effDisplay}
-            sub={effSub}
-            {...(effScore !== null
-              ? { animate: true, numericValue: Math.round(effScore * 100), suffix: '%' }
-              : {})}
-          />
-          <Kpi
-            label="spend today"
-            tone="accent"
-            value={spendLoading ? '…' : `$${todayTotal.toFixed(2)}`}
-            {...(!spendLoading
-              ? { animate: true, numericValue: todayTotal, prefix: '$', decimals: 2 }
-              : {})}
-          />
-          <Kpi label="tool calls" value={String(calls)} animate numericValue={calls} />
-          <Kpi
-            label="flags"
-            tone={flagsCount > 0 ? 'warn' : 'neutral'}
-            value={String(flagsCount)}
-            animate
-            numericValue={flagsCount}
-          />
-        </div>
-      </AnimatedCard>
-
-      <AnimatedCard index={1}>
-        <ModelHealthCard health={modelHealth} />
-      </AnimatedCard>
-
-      <AnimatedCard index={2} className="grid grid-cols-2 gap-3 mb-3">
-        <ForecastEodCard
-          todayTotal={todayTotal}
-          forecastEod={
-            spendLoading
-              ? null
-              : (cost?.forecastEodUsd ??
-                (costApi?.forecast?.forecastEndOfDayUsd != null
-                  ? persistedTodaySpend + costApi.forecast.forecastEndOfDayUsd
-                  : null))
-          }
-          spendPoints={buildSpendSparkline(
-            todaySessions ?? [],
-            costApi?.cost?.sessionTotalCostUsd ?? 0,
-          )}
-        />
-        {concurrency && (
-          <ConcurrencyIndicator
-            current={concurrency.current}
-            peak={concurrency.peak}
-            timeSeries={concurrency.timeSeries}
-          />
-        )}
-      </AnimatedCard>
-
-      {flagsCount > 0 &&
-        (antiPatterns.length > 0 || (apiAntiPatterns && apiAntiPatterns.length > 0)) && (
-          <AnimatedCard index={3} className="mb-3 glass-card border-accent-amber/40 p-2.5 text-xs">
-            {antiPatterns.length > 0 ? (
-              <>
-                <span className="text-accent-amber font-semibold">⚠ {antiPatterns[0].type}</span>
-                <span className="text-ink-muted"> — </span>
-                <span>{antiPatterns[0].count}× on </span>
-                <code className="bg-bg-line px-1 rounded">{antiPatterns[0].target}</code>
-              </>
-            ) : apiAntiPatterns && apiAntiPatterns.length > 0 ? (
-              <>
-                <span className="text-accent-amber font-semibold">⚠ {apiAntiPatterns[0].type}</span>
-                <span className="text-ink-muted"> — </span>
-                <span>
-                  {apiAntiPatterns[0].count ??
-                    apiAntiPatterns[0].iterations ??
-                    apiAntiPatterns[0].readCount ??
-                    '?'}
-                  × on{' '}
-                </span>
-                <code className="bg-bg-line px-1 rounded">
-                  {apiAntiPatterns[0].file ?? apiAntiPatterns[0].command ?? 'unknown'}
-                </code>
-              </>
-            ) : null}
+      {noActivityToday ? (
+        <>
+          <AnimatedCard index={0} className="glass-card p-8 mb-4">
+            <EmptyState
+              icon="code"
+              title="No activity yet today"
+              subtitle="Metrics will appear here once you start a coding session with Claude."
+            />
           </AnimatedCard>
-        )}
 
-      <AnimatedCard index={4} className="grid grid-cols-2 gap-3 mb-3">
-        <QualityProxyPanel />
-        <ToolSelectionPanel />
-      </AnimatedCard>
+          <AnimatedCard index={1}>
+            <RecentAlertsPanel />
+          </AnimatedCard>
+        </>
+      ) : (
+        <>
+          <AnimatedCard index={0} className="glass-card glow-green p-5 mb-4">
+            <div className="grid grid-cols-4 gap-6">
+              <Kpi
+                label="efficiency"
+                hero
+                value={effDisplay}
+                sub={effSub}
+                {...(effScore !== null
+                  ? { animate: true, numericValue: Math.round(effScore * 100), suffix: '%' }
+                  : {})}
+              />
+              <Kpi
+                label="spend today"
+                tone="accent"
+                value={spendLoading ? '…' : `$${todayTotal.toFixed(2)}`}
+                {...(!spendLoading
+                  ? { animate: true, numericValue: todayTotal, prefix: '$', decimals: 2 }
+                  : {})}
+              />
+              <Kpi label="tool calls" value={String(calls)} animate numericValue={calls} />
+              <Kpi
+                label="flags"
+                tone={flagsCount > 0 ? 'warn' : 'neutral'}
+                value={String(flagsCount)}
+                animate
+                numericValue={flagsCount}
+              />
+            </div>
+          </AnimatedCard>
 
-      <AnimatedCard index={5}>
-        <LiveSessionPane sessions={todaySessions ?? []} />
-      </AnimatedCard>
+          <AnimatedCard index={1} className="grid grid-cols-2 gap-3 mb-3">
+            <ForecastEodCard
+              todayTotal={todayTotal}
+              forecastEod={
+                spendLoading
+                  ? null
+                  : (cost?.forecastEodUsd ??
+                    (costApi?.forecast?.forecastEndOfDayUsd != null
+                      ? persistedTodaySpend + costApi.forecast.forecastEndOfDayUsd
+                      : null))
+              }
+              spendPoints={buildSpendSparkline(
+                todaySessions ?? [],
+                costApi?.cost?.sessionTotalCostUsd ?? 0,
+              )}
+            />
+            {concurrency && concurrency.timeSeries && (
+              <ConcurrencyIndicator
+                current={concurrency.current}
+                peak={concurrency.peak}
+                timeSeries={concurrency.timeSeries}
+              />
+            )}
+          </AnimatedCard>
 
-      {todayHeatmap && todayHeatmap.buckets.length > 0 && (
-        <AnimatedCard index={6} className="glass-card p-3 mb-3">
-          <div className="text-[10px] text-ink-muted uppercase tracking-wider mb-2">
-            activity · today
-          </div>
-          <ActivityHeatmap
-            variant="strip"
-            buckets={todayHeatmap.buckets}
-            maxCount={todayHeatmap.maxCount}
-            bucketSizeMs={todayHeatmap.bucketSizeMs}
-            startTimestamp={todayHeatmap.startTimestamp}
-            ariaLabel="Today's activity density in 15-minute blocks"
-          />
-        </AnimatedCard>
+          {flagsCount > 0 &&
+            (antiPatterns.length > 0 || (apiAntiPatterns && apiAntiPatterns.length > 0)) && (
+              <AnimatedCard
+                index={2}
+                className="mb-3 glass-card border-accent-amber/40 p-2.5 text-xs"
+              >
+                {antiPatterns.length > 0 ? (
+                  <>
+                    <span className="text-accent-amber font-semibold">
+                      ⚠ {antiPatterns[0].type}
+                    </span>
+                    <span className="text-ink-muted"> — </span>
+                    <span>{antiPatterns[0].count}× on </span>
+                    <code className="bg-bg-line px-1 rounded">{antiPatterns[0].target}</code>
+                  </>
+                ) : apiAntiPatterns && apiAntiPatterns.length > 0 ? (
+                  <>
+                    <span className="text-accent-amber font-semibold">
+                      ⚠ {apiAntiPatterns[0].type}
+                    </span>
+                    <span className="text-ink-muted"> — </span>
+                    <span>
+                      {apiAntiPatterns[0].count ??
+                        apiAntiPatterns[0].iterations ??
+                        apiAntiPatterns[0].readCount ??
+                        '?'}
+                      × on{' '}
+                    </span>
+                    <code className="bg-bg-line px-1 rounded">
+                      {apiAntiPatterns[0].file ?? apiAntiPatterns[0].command ?? 'unknown'}
+                    </code>
+                  </>
+                ) : null}
+              </AnimatedCard>
+            )}
+
+          <AnimatedCard index={3} className="grid grid-cols-2 gap-3 mb-3">
+            <QualityProxyPanel />
+            <ToolSelectionPanel />
+          </AnimatedCard>
+
+          <AnimatedCard index={4}>
+            <LiveSessionPane sessions={todaySessions ?? []} />
+          </AnimatedCard>
+
+          {todayHeatmap && todayHeatmap.buckets?.length > 0 && (
+            <AnimatedCard index={5} className="glass-card p-3 mb-3">
+              <div className="text-[10px] text-ink-muted uppercase tracking-wider mb-2">
+                activity · today
+              </div>
+              <ActivityHeatmap
+                variant="strip"
+                buckets={todayHeatmap.buckets}
+                maxCount={todayHeatmap.maxCount}
+                bucketSizeMs={todayHeatmap.bucketSizeMs}
+                startTimestamp={todayHeatmap.startTimestamp}
+                ariaLabel="Today's activity density in 15-minute blocks"
+              />
+            </AnimatedCard>
+          )}
+
+          <AnimatedCard index={6}>
+            <RecentAlertsPanel />
+          </AnimatedCard>
+        </>
       )}
-
-      <AnimatedCard index={7}>
-        <RecentAlertsPanel />
-      </AnimatedCard>
     </section>
   );
 }
@@ -584,8 +595,12 @@ function LiveSessionPane({ sessions }: { sessions: SessionSummary[] }): JSX.Elem
                 )}
               </div>
               <div className="flex gap-2 mt-0.5 text-[10px] text-ink-subtle">
-                <span>${(s.estimatedCostUsd ?? 0).toFixed(2)}</span>
                 <span>{s.toolCallCount ?? 0} calls</span>
+                {s.estimatedCostUsd != null && s.estimatedCostUsd > 0 ? (
+                  <span>${s.estimatedCostUsd.toFixed(2)}</span>
+                ) : (
+                  <span>—</span>
+                )}
               </div>
             </button>
           );
@@ -833,113 +848,6 @@ function computeTodayFlags(sessions: SessionSummary[]): number {
     }
   }
   return total;
-}
-
-export interface ModelHealthResult {
-  readonly status: 'healthy' | 'degraded' | 'poor' | 'unknown';
-  readonly model: string | null;
-  readonly currentRate: number | null;
-  readonly baseline: number | null;
-  readonly message: string;
-}
-
-const MIN_SESSIONS_FOR_BASELINE = 3;
-const DEGRADED_THRESHOLD = 0.1;
-const POOR_THRESHOLD = 0.2;
-const POOR_ERROR_THRESHOLD = 5;
-
-export function computeModelHealth(
-  currentModel: string | null,
-  currentSuccessRate: number | null,
-  currentErrorCount: number,
-  sessions: SessionSummary[],
-): ModelHealthResult {
-  if (!currentModel || currentSuccessRate === null) {
-    return {
-      status: 'unknown',
-      model: currentModel,
-      currentRate: null,
-      baseline: null,
-      message: 'Waiting for data…',
-    };
-  }
-
-  const modelSessions = sessions.filter(
-    (s) => s.model === currentModel && s.toolSuccessRate != null,
-  );
-  const baseline =
-    modelSessions.length >= MIN_SESSIONS_FOR_BASELINE
-      ? modelSessions.reduce((sum, s) => sum + (s.toolSuccessRate ?? 0), 0) / modelSessions.length
-      : null;
-
-  if (baseline === null) {
-    const pct = Math.round(currentSuccessRate * 100);
-    return {
-      status: 'healthy',
-      model: currentModel,
-      currentRate: currentSuccessRate,
-      baseline: null,
-      message: `${pct}% success`,
-    };
-  }
-
-  const gap = baseline - currentSuccessRate;
-
-  if (gap > POOR_THRESHOLD || currentErrorCount > POOR_ERROR_THRESHOLD) {
-    const pct = Math.round(currentSuccessRate * 100);
-    const basePct = Math.round(baseline * 100);
-    return {
-      status: 'poor',
-      model: currentModel,
-      currentRate: currentSuccessRate,
-      baseline,
-      message: `${pct}% success (avg ${basePct}%) — consider switching models`,
-    };
-  }
-
-  if (gap > DEGRADED_THRESHOLD) {
-    const pct = Math.round(currentSuccessRate * 100);
-    const basePct = Math.round(baseline * 100);
-    return {
-      status: 'degraded',
-      model: currentModel,
-      currentRate: currentSuccessRate,
-      baseline,
-      message: `${pct}% success (avg ${basePct}%) — may be throttled`,
-    };
-  }
-
-  const pct = Math.round(currentSuccessRate * 100);
-  return {
-    status: 'healthy',
-    model: currentModel,
-    currentRate: currentSuccessRate,
-    baseline,
-    message: `${pct}% success`,
-  };
-}
-
-const HEALTH_STYLE: Record<ModelHealthResult['status'], { dot: string }> = {
-  healthy: { dot: 'text-emerald-400' },
-  degraded: { dot: 'text-accent-amber' },
-  poor: { dot: 'text-accent-red' },
-  unknown: { dot: 'text-ink-muted' },
-};
-
-function ModelHealthCard({ health }: { health: ModelHealthResult }): JSX.Element {
-  const style = HEALTH_STYLE[health.status];
-  return (
-    <div className={`glass-card p-2.5 mb-3`}>
-      <div className="flex items-center gap-2 text-xs">
-        <span className={style.dot} aria-hidden="true">
-          ●
-        </span>
-        <span className="font-medium text-ink-default">{health.model ?? 'unknown model'}</span>
-        <span className="text-ink-muted">·</span>
-        <span className="text-ink-subtle">{health.message}</span>
-      </div>
-    </div>
-  );
 }
 
 function buildSpendSparkline(sessions: SessionSummary[], currentSessionCost: number): number[] {

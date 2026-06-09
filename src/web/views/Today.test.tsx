@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { Today, computeModelHealth } from './Today';
+import { Today } from './Today';
 import { useLiveStore } from '../store/liveStore';
 
 function renderToday(qc?: QueryClient) {
@@ -133,6 +133,51 @@ describe('Today view', () => {
   });
 });
 
+describe('Today view — empty state', () => {
+  beforeEach(() => {
+    useLiveStore.setState({
+      connected: true,
+      recentToolCalls: [],
+      cost: { sessionTotalUsd: 0, todayTotalUsd: 0, forecastEodUsd: null },
+      antiPatterns: [],
+      firingAlerts: new Map(),
+      dismissedAlerts: new Set(),
+    });
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response(JSON.stringify([]), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+    ) as typeof fetch;
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('shows a full-page empty state when there is no today activity', async () => {
+    renderToday();
+    expect(await screen.findByText('No activity yet today')).toBeInTheDocument();
+    expect(screen.queryByText('spend today')).toBeNull();
+    expect(screen.queryByText('tool calls')).toBeNull();
+  });
+
+  it('still renders the header with "Today" title in empty state', async () => {
+    renderToday();
+    await screen.findByText('No activity yet today');
+    expect(screen.getByText('Today')).toBeInTheDocument();
+  });
+
+  it('renders the normal KPI view when there is today activity', () => {
+    useLiveStore.setState({
+      cost: { sessionTotalUsd: 1.5, todayTotalUsd: 1.5, forecastEodUsd: null },
+    });
+    renderToday();
+    expect(screen.getByText('spend today')).toBeInTheDocument();
+    expect(screen.queryByText('No activity yet today')).toBeNull();
+  });
+});
+
 describe('Today header timestamp', () => {
   beforeEach(() => {
     useLiveStore.setState({
@@ -257,8 +302,8 @@ describe('Today view — Recent alerts panel', () => {
 
     expect(await screen.findByText('Cost spike')).toBeInTheDocument();
     expect(screen.getByText('Stuck loop')).toBeInTheDocument();
-    // value/threshold formatted column.
-    expect(screen.getByText(/12\.50 \/ 10/)).toBeInTheDocument();
+    // value/threshold formatted column (formatNumber: 12.5 → "12.5", 10 → "10.0").
+    expect(screen.getByText(/12\.5 \/ 10\.0/)).toBeInTheDocument();
     // state column shows firing vs cleared.
     expect(screen.getByText('firing')).toBeInTheDocument();
     expect(screen.getByText('cleared')).toBeInTheDocument();
@@ -365,68 +410,5 @@ describe('Today view — Recent alerts panel', () => {
     await screen.findByText('New alert');
     const titles = screen.getAllByText(/(?:Old|Middle|New) alert/);
     expect(titles.map((el) => el.textContent)).toEqual(['New alert', 'Middle alert', 'Old alert']);
-  });
-});
-
-describe('computeModelHealth', () => {
-  const makeSessions = (model: string, rates: number[]) =>
-    rates.map((r, i) => ({
-      sessionId: `s${i}`,
-      startTime: Date.now() - i * 3600_000,
-      model,
-      toolSuccessRate: r,
-    }));
-
-  it('returns unknown when model is null', () => {
-    const result = computeModelHealth(null, 0.95, 0, []);
-    expect(result.status).toBe('unknown');
-  });
-
-  it('returns unknown when success rate is null', () => {
-    const result = computeModelHealth('claude-opus-4-6', null, 0, []);
-    expect(result.status).toBe('unknown');
-  });
-
-  it('returns healthy when no baseline exists (fewer than 3 sessions)', () => {
-    const sessions = makeSessions('claude-opus-4-6', [0.95, 0.92]);
-    const result = computeModelHealth('claude-opus-4-6', 0.9, 0, sessions);
-    expect(result.status).toBe('healthy');
-    expect(result.baseline).toBeNull();
-  });
-
-  it('returns healthy when current rate is close to baseline', () => {
-    const sessions = makeSessions('claude-opus-4-6', [0.95, 0.93, 0.96]);
-    const result = computeModelHealth('claude-opus-4-6', 0.92, 0, sessions);
-    expect(result.status).toBe('healthy');
-    expect(result.baseline).toBeCloseTo(0.9467, 2);
-  });
-
-  it('returns degraded when gap exceeds 10 points', () => {
-    const sessions = makeSessions('claude-opus-4-6', [0.95, 0.94, 0.96]);
-    const result = computeModelHealth('claude-opus-4-6', 0.82, 1, sessions);
-    expect(result.status).toBe('degraded');
-    expect(result.message).toContain('may be throttled');
-  });
-
-  it('returns poor when gap exceeds 20 points', () => {
-    const sessions = makeSessions('claude-opus-4-6', [0.95, 0.94, 0.96]);
-    const result = computeModelHealth('claude-opus-4-6', 0.7, 2, sessions);
-    expect(result.status).toBe('poor');
-    expect(result.message).toContain('consider switching');
-  });
-
-  it('returns poor when error count exceeds threshold regardless of rate', () => {
-    const sessions = makeSessions('claude-opus-4-6', [0.95, 0.94, 0.96]);
-    const result = computeModelHealth('claude-opus-4-6', 0.9, 6, sessions);
-    expect(result.status).toBe('poor');
-  });
-
-  it('only compares sessions for the same model', () => {
-    const sessions = [
-      ...makeSessions('claude-opus-4-6', [0.95, 0.94, 0.96]),
-      ...makeSessions('claude-sonnet-4-6', [0.6, 0.65, 0.62]),
-    ];
-    const result = computeModelHealth('claude-opus-4-6', 0.92, 0, sessions);
-    expect(result.status).toBe('healthy');
   });
 });

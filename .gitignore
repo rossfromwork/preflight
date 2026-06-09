@@ -7,3 +7,5 @@ coverage/
 !.env.example
 .superpowers/
 .claude/
+test-results/
+playwright-report/
