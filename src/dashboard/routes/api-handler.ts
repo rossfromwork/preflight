@@ -207,6 +207,7 @@ export interface ApiHandlerDeps {
     getPeakConcurrent: () => number;
     getConcurrencyTimeSeries: () => readonly { timestamp: number; count: number }[];
   };
+  readonly contextTracker?: { getMetrics: (sessionId?: string) => unknown };
 }
 
 type RouteFn = (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
@@ -409,7 +410,7 @@ function buildReplayResponse(sessionId: string, deps: ApiHandlerDeps): unknown |
     }
   }
 
-  // Try live session from TaskDetector
+  // Try live session from TaskDetector — filter to the requested sessionId
   if (deps.taskDetector) {
     const completed = deps.taskDetector.getCompletedTasks();
     const current = deps.taskDetector.getCurrentTask();
@@ -420,9 +421,10 @@ function buildReplayResponse(sessionId: string, deps: ApiHandlerDeps): unknown |
     if (current) {
       allCalls.push(...(current.toolCalls as ToolCallRecord[]));
     }
-    if (allCalls.length > 0) {
-      allCalls.sort((a, b) => a.timestamp - b.timestamp);
-      const timeline = allCalls.map(toolCallToTimelineEntry);
+    const sessionCalls = allCalls.filter((c) => c.sessionId === sessionId);
+    if (sessionCalls.length > 0) {
+      sessionCalls.sort((a, b) => a.timestamp - b.timestamp);
+      const timeline = sessionCalls.map(toolCallToTimelineEntry);
       const analysis = analyzeReplayTimeline(timeline);
       return {
         sessionId,
@@ -638,6 +640,14 @@ export function createApiHandler(
     if (!deps.gitEfficiencyTracker) return unavailable(res, 'gitEfficiencyTracker');
     jsonOk(res, deps.gitEfficiencyTracker.getMetrics());
   });
+
+  routes.set('GET /api/context', (req, res) => {
+    if (!deps.contextTracker) return unavailable(res, 'contextTracker');
+    const url = new URL(req.url ?? '/', 'http://localhost');
+    const sessionId = url.searchParams.get('sessionId') ?? undefined;
+    jsonOk(res, deps.contextTracker.getMetrics(sessionId));
+  });
+
   routes.set('GET /api/concurrency', (req, res) => {
     if (!deps.concurrencyTracker) return unavailable(res, 'concurrencyTracker');
     try {

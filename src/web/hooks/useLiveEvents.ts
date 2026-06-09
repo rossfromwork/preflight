@@ -92,11 +92,19 @@ export function useLiveEvents(url: string = '/sse'): void {
         /* ignore malformed */
       }
     };
+    const onContext = (e: MessageEvent): void => {
+      try {
+        useLiveStore.getState().setContext(JSON.parse(e.data));
+      } catch {
+        /* ignore malformed */
+      }
+    };
 
     es.addEventListener('tool-call', onToolCall as EventListener);
     es.addEventListener('cost-update', onCost as EventListener);
     es.addEventListener('anti-pattern', onAnti as EventListener);
     es.addEventListener('alert', onAlert as EventListener);
+    es.addEventListener('context-update', onContext as EventListener);
 
     return (): void => {
       controller.abort();
@@ -104,6 +112,7 @@ export function useLiveEvents(url: string = '/sse'): void {
       es.removeEventListener('cost-update', onCost as EventListener);
       es.removeEventListener('anti-pattern', onAnti as EventListener);
       es.removeEventListener('alert', onAlert as EventListener);
+      es.removeEventListener('context-update', onContext as EventListener);
       es.close();
     };
   }, [url]);

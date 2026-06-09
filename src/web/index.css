@@ -332,6 +332,58 @@ html.light .mesh-bg::after {
   }
 }
 
+/* Context compaction animation — bar squishes inward like being compressed */
+@keyframes context-compact {
+  0% {
+    transform: scaleX(1);
+    filter: brightness(1);
+  }
+  20% {
+    transform: scaleX(1.03);
+    filter: brightness(1.3);
+  }
+  50% {
+    transform: scaleX(0.4);
+    filter: brightness(1.6) saturate(1.5);
+  }
+  70% {
+    transform: scaleX(0.6);
+    filter: brightness(1.2);
+  }
+  100% {
+    transform: scaleX(1);
+    filter: brightness(1);
+  }
+}
+
+@keyframes compact-flash {
+  0% {
+    opacity: 0;
+  }
+  30% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+.animate-compact {
+  animation: context-compact 0.8s cubic-bezier(0.22, 1, 0.36, 1);
+  transform-origin: center;
+}
+
+.animate-compact-flash {
+  animation: compact-flash 1s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-compact,
+  .animate-compact-flash {
+    animation: none !important;
+  }
+}
+
 /* Geometric banner decoration */
 .geo-banner {
   height: 48px;

@@ -19,6 +19,7 @@ import {
   fetchSessionReplay,
   qk,
 } from '../api/client';
+import { ContextBar, type ContextApiResponse } from '../components/ContextBar';
 import { shortToolName } from '../lib/format';
 import { bucketTimeline, autoBucketSize } from '../lib/bucket';
 
@@ -167,12 +168,6 @@ export function Sessions(): JSX.Element {
     refetchInterval: 10_000,
   });
 
-  const detail = useQuery<SessionDetail>({
-    queryKey: selectedId ? qk.sessionDetail(selectedId) : ['session', 'none'],
-    queryFn: () => fetchSessionDetail(selectedId!) as Promise<SessionDetail>,
-    enabled: selectedId !== null,
-  });
-
   const liveSessionIds = useMemo(() => {
     const set = new Set<string>();
     if (current.data?.liveSessions?.length) {
@@ -182,6 +177,16 @@ export function Sessions(): JSX.Element {
     }
     return set;
   }, [current.data]);
+
+  const detail = useQuery<SessionDetail>({
+    queryKey: selectedId ? qk.sessionDetail(selectedId) : ['session', 'none'],
+    queryFn: () => fetchSessionDetail(selectedId!) as Promise<SessionDetail>,
+    enabled: selectedId !== null,
+    // Poll while current session data is still loading (we don't know yet if
+    // this session is live), then only continue polling if it turns out to be live.
+    refetchInterval:
+      current.isLoading || (selectedId && liveSessionIds.has(selectedId)) ? 10_000 : false,
+  });
 
   const rows = useMemo(() => {
     const persisted = list.data ?? [];
@@ -455,31 +460,19 @@ function SessionTimeline({ data, isLive }: { data: SessionDetail; isLive: boolea
         </div>
       )}
 
-      {breakdownEntries.length > 0 && (
+      {isLive && (
         <div className="mb-4">
-          <div className="text-[10px] text-ink-muted uppercase tracking-wider mb-2">
-            Tool breakdown
-          </div>
-          <div className="flex flex-col gap-1">
-            {breakdownEntries.map(([tool, count]) => {
-              const pct = totalCalls > 0 ? (count / totalCalls) * 100 : 0;
-              return (
-                <div key={tool} className="flex items-center gap-2 text-[11px]">
-                  <span className="w-28 text-ink-subtle truncate" title={tool}>
-                    {shortToolName(tool)}
-                  </span>
-                  <div className="flex-1 h-3 bg-surface-3 relative rounded">
-                    <div
-                      className={`h-3 rounded ${toolBarColor(tool)}`}
-                      style={{ width: `${pct}%` }}
-                    />
-                  </div>
-                  <span className="w-10 text-right text-ink-muted tabular-nums">{count}</span>
-                </div>
-              );
-            })}
-          </div>
+          <ContextBar sessionId={data.sessionId} />
         </div>
+      )}
+
+      {breakdownEntries.length > 0 && (
+        <ToolsSection
+          breakdownEntries={breakdownEntries}
+          totalCalls={totalCalls}
+          isLive={isLive}
+          sessionId={data.sessionId}
+        />
       )}
 
       {(data.filesModified?.length ?? 0) > 0 && (
@@ -502,6 +495,101 @@ function SessionTimeline({ data, isLive }: { data: SessionDetail; isLive: boolea
       <InlineReplay sessionId={data.sessionId} isLive={isLive} />
     </div>
   );
+}
+
+function ToolsSection({
+  breakdownEntries,
+  totalCalls,
+  isLive,
+  sessionId,
+}: {
+  breakdownEntries: [string, number][];
+  totalCalls: number;
+  isLive: boolean;
+  sessionId: string;
+}): JSX.Element {
+  const [tab, setTab] = useState<'calls' | 'context'>('calls');
+
+  const contextUrl = `/api/context?sessionId=${encodeURIComponent(sessionId)}`;
+  const { data: contextData } = useQuery<ContextApiResponse>({
+    queryKey: ['context', sessionId],
+    queryFn: () => fetch(contextUrl).then((r) => (r.ok ? r.json() : null)),
+    refetchInterval: 10_000,
+    enabled: isLive && tab === 'context',
+  });
+
+  const toolContributions = contextData?.toolContributions ?? [];
+  const maxTokens = toolContributions.length > 0 ? toolContributions[0]!.estimatedTokens : 0;
+
+  return (
+    <div className="mb-4">
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-[10px] text-ink-muted uppercase tracking-wider">Tools</div>
+        {isLive && (
+          <div className="flex gap-0.5 text-[10px]">
+            <button
+              onClick={() => setTab('calls')}
+              className={`px-2 py-0.5 rounded ${tab === 'calls' ? 'bg-accent-cyan/20 text-accent-cyan font-semibold' : 'text-ink-muted hover:text-ink-subtle'}`}
+            >
+              Calls
+            </button>
+            <button
+              onClick={() => setTab('context')}
+              className={`px-2 py-0.5 rounded ${tab === 'context' ? 'bg-accent-cyan/20 text-accent-cyan font-semibold' : 'text-ink-muted hover:text-ink-subtle'}`}
+            >
+              Context
+            </button>
+          </div>
+        )}
+      </div>
+      <div className="flex flex-col gap-1">
+        {tab === 'calls' &&
+          breakdownEntries.map(([tool, count]) => {
+            const pct = totalCalls > 0 ? (count / totalCalls) * 100 : 0;
+            return (
+              <div key={tool} className="flex items-center gap-2 text-[11px]">
+                <span className="w-28 text-ink-subtle truncate" title={tool}>
+                  {shortToolName(tool)}
+                </span>
+                <div className="flex-1 h-3 bg-surface-3 relative rounded">
+                  <div
+                    className={`h-3 rounded ${toolBarColor(tool)}`}
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+                <span className="w-10 text-right text-ink-muted tabular-nums">{count}</span>
+              </div>
+            );
+          })}
+        {tab === 'context' &&
+          toolContributions.map((tc) => {
+            const pct = maxTokens > 0 ? (tc.estimatedTokens / maxTokens) * 100 : 0;
+            return (
+              <div key={tc.tool} className="flex items-center gap-2 text-[11px]">
+                <span className="w-28 text-ink-subtle truncate" title={tc.tool}>
+                  {shortToolName(tc.tool)}
+                </span>
+                <div className="flex-1 h-3 bg-surface-3 relative rounded">
+                  <div className="h-3 rounded bg-accent-amber/80" style={{ width: `${pct}%` }} />
+                </div>
+                <span className="w-16 text-right text-ink-muted tabular-nums text-[10px]">
+                  ~{formatTokens(tc.estimatedTokens)}
+                </span>
+              </div>
+            );
+          })}
+        {tab === 'context' && toolContributions.length === 0 && (
+          <div className="text-[11px] text-ink-muted">No context data available yet</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
 }
 
 function SessionActivityStrip({

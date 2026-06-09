@@ -250,7 +250,7 @@ describe('sse-handler', () => {
     (res as unknown as { write: jest.Mock }).write = jest.fn();
 
     createSseHandler(bus)(req, res);
-    // Sanity: bus.onWithSeq attached one listener per channel (4 total).
+    // Sanity: bus.onWithSeq attached one listener per channel (5 total).
     expect(offSpy).not.toHaveBeenCalled();
 
     // Both close events fire — cleanup runs twice but the guard makes the
@@ -265,8 +265,9 @@ describe('sse-handler', () => {
     expect(callsByEvent['tool-call']).toBe(1);
     expect(callsByEvent['cost-update']).toBe(1);
     expect(callsByEvent['anti-pattern']).toBe(1);
+    expect(callsByEvent['context-update']).toBe(1);
     expect(callsByEvent['alert']).toBe(1);
-    expect(offSpy).toHaveBeenCalledTimes(4);
+    expect(offSpy).toHaveBeenCalledTimes(5);
   });
 
   it('heartbeat frame id is non-numeric ("hb-<ts>") and does not affect bus seq', async () => {

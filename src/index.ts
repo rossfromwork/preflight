@@ -33,6 +33,7 @@ import { TaskCompletionTracker } from './metrics/task-completion-tracker.js';
 import { ModelUsageTracker } from './metrics/model-usage-tracker.js';
 import { RetryDetector } from './metrics/retry-detector.js';
 import { ContextCompositionTracker } from './metrics/context-composition-tracker.js';
+import { ContextTrackerRegistry } from './metrics/context-tracker.js';
 import { LatencyDecompositionTracker } from './metrics/latency-decomposition.js';
 import { DecisionTracker } from './metrics/decision-tracker.js';
 import { InstructionDriftTracker } from './metrics/instruction-drift-tracker.js';
@@ -340,6 +341,7 @@ async function main(): Promise<void> {
     const modelUsageTracker = new ModelUsageTracker();
     const retryDetector = new RetryDetector();
     const contextCompositionTracker = new ContextCompositionTracker();
+    const contextTracker = new ContextTrackerRegistry();
     // LatencyDecompositionTracker requires turn-level LLM vs tool timing that is
     // only available in proxy mode (where we see upstream response latency). In
     // stdio mode the data cannot be auto-populated so we skip instantiation.
@@ -607,6 +609,7 @@ async function main(): Promise<void> {
           liveSessionRegistry,
           gitEfficiencyTracker,
           concurrencyTracker: liveSessionRegistry,
+          contextTracker,
         },
         alertEngine,
         alertLog,
@@ -764,6 +767,7 @@ async function main(): Promise<void> {
         }
 
         contextWindowTracker.recordToolCall(record);
+        contextTracker.recordToolCall(record);
         latencyTracker.recordToolCall(record);
         retryDetector.recordToolCall(record);
         qualityProxyTracker.recordToolCall(record);
@@ -895,6 +899,30 @@ async function main(): Promise<void> {
         );
         contextCompositionTracker.recordTokenEvent(tokenEvent);
 
+        const ctxSnapshot = contextTracker.recordTurn(tokenEvent);
+        if (ctxSnapshot && tokenEvent.sessionId) {
+          const sid = tokenEvent.sessionId;
+          const ctxMetrics = contextTracker.getMetrics(sid);
+          const ctxTopTools = ctxMetrics.toolContributions.slice(0, 5);
+          liveBus.emit('context-update', {
+            sessionId: sid,
+            turnNumber: ctxSnapshot.turnNumber,
+            totalTokens: ctxSnapshot.inputTokens,
+            fillPercent: ctxSnapshot.fillPercent,
+            breakdown: ctxSnapshot.breakdown,
+            growth: {
+              startTokens: ctxMetrics.growth.startTokens,
+              currentTokens: ctxMetrics.growth.currentTokens,
+              delta: ctxMetrics.growth.deltaTokens,
+            },
+            topTools: ctxTopTools.map((t) => ({
+              tool: t.tool,
+              estimatedTokens: t.estimatedTokens,
+            })),
+          });
+          capturedNrIngest?.ingestContextSnapshot(ctxSnapshot, ctxTopTools);
+        }
+
         const costMetrics = costTracker.getMetrics();
         if (costMetrics.sessionTotalCostUsd !== null) {
           budgetTracker.updateCost(
@@ -974,6 +1002,7 @@ async function main(): Promise<void> {
         costPerOutcomeAnalyzer,
         recommendationEngine,
         contextWindowTracker,
+        contextTracker,
         latencyTracker,
         taskCompletionTracker,
         modelUsageTracker,

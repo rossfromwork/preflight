@@ -60,11 +60,13 @@ export function createSseHandler(
       'tool-call': onAny('tool-call'),
       'cost-update': onAny('cost-update'),
       'anti-pattern': onAny('anti-pattern'),
+      'context-update': onAny('context-update'),
       alert: onAny('alert'),
     } as const;
     bus.onWithSeq('tool-call', handlers['tool-call']);
     bus.onWithSeq('cost-update', handlers['cost-update']);
     bus.onWithSeq('anti-pattern', handlers['anti-pattern']);
+    bus.onWithSeq('context-update', handlers['context-update']);
     bus.onWithSeq('alert', handlers['alert']);
 
     // Heartbeats use a string id ("hb-<ts>") so they don't share the bus
@@ -85,6 +87,7 @@ export function createSseHandler(
       bus.offWithSeq('tool-call', handlers['tool-call']);
       bus.offWithSeq('cost-update', handlers['cost-update']);
       bus.offWithSeq('anti-pattern', handlers['anti-pattern']);
+      bus.offWithSeq('context-update', handlers['context-update']);
       bus.offWithSeq('alert', handlers['alert']);
     };
     req.on('close', cleanup);

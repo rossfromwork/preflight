@@ -48,6 +48,10 @@ export const fetchActivityHeatmap = (view: string, weeks?: number): Promise<unkn
   getJson<unknown>(
     `/api/activity-heatmap?view=${encodeURIComponent(view)}${weeks ? `&weeks=${weeks}` : ''}`,
   );
+export const fetchContext = (sessionId?: string): Promise<unknown> =>
+  getJson<unknown>(
+    sessionId ? `/api/context?sessionId=${encodeURIComponent(sessionId)}` : '/api/context',
+  );
 
 export const qk = {
   sessionCurrent: ['session', 'current'] as const,
@@ -71,4 +75,5 @@ export const qk = {
   concurrency: ['concurrency'] as const,
   concurrencyHistory: (days: number) => ['concurrency', 'history', days] as const,
   activityHeatmap: (view: string) => ['activity-heatmap', view] as const,
+  context: ['context'] as const,
 };

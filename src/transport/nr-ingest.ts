@@ -30,6 +30,7 @@ import type { SessionTracker } from '../metrics/session-tracker.js';
 import type { CostTracker } from '../metrics/cost-tracker.js';
 import type { EfficiencyScorer } from '../metrics/efficiency-score.js';
 import type { BudgetThresholdEvent } from '../metrics/budget-tracker.js';
+import type { ContextTurnSnapshot, ToolContextContribution } from '../metrics/context-tracker.js';
 import { ProxyMetricsTracker } from '../metrics/proxy-metrics.js';
 import {
   AuditTrailManager,
@@ -669,6 +670,38 @@ export class NrIngestManager {
       detectedAt: context.detectedAt,
     });
     this.scheduler.addEvent(event);
+  }
+
+  ingestContextSnapshot(
+    snapshot: ContextTurnSnapshot,
+    topTools: readonly ToolContextContribution[],
+  ): void {
+    const nrEvent: NrEventData = {
+      eventType: 'AiContextSnapshot',
+      timestamp: snapshot.timestamp,
+      developer: this.developer,
+      appName: this.appName,
+      turn_number: snapshot.turnNumber,
+      total_context_tokens: snapshot.inputTokens,
+      output_tokens: snapshot.outputTokens,
+      cache_read_tokens: snapshot.cacheReadTokens,
+      cache_creation_tokens: snapshot.cacheCreationTokens,
+      fill_percent: snapshot.fillPercent,
+      system_tokens: snapshot.breakdown.system,
+      tool_tokens: snapshot.breakdown.tools,
+      user_tokens: snapshot.breakdown.user,
+      assistant_tokens: snapshot.breakdown.assistant,
+    };
+    if (topTools.length > 0) {
+      nrEvent.top_tool = topTools[0].tool;
+      nrEvent.top_tool_bytes = topTools[0].totalBytes;
+      nrEvent.top_tool_tokens = topTools[0].estimatedTokens;
+    }
+    if (this.teamId) nrEvent.team_id = this.teamId;
+    if (this.projectId) nrEvent.project_id = this.projectId;
+    if (this.orgId) nrEvent.org_id = this.orgId;
+    if (this.sessionTraceId != null) nrEvent.session_id = this.sessionTraceId;
+    this.scheduler.addEvent(nrEvent);
   }
 
   ingestBudgetWarning(event: BudgetThresholdEvent): void {

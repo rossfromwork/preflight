@@ -81,6 +81,7 @@ import {
   handleGetPersonalInsights,
 } from './cross-session-tools.js';
 import type { ContextWindowTracker } from '../metrics/context-window-tracker.js';
+import type { ContextTrackerRegistry } from '../metrics/context-tracker.js';
 import type { LatencyTracker } from '../metrics/latency-tracker.js';
 import type { TaskCompletionTracker } from '../metrics/task-completion-tracker.js';
 import type { ModelUsageTracker } from '../metrics/model-usage-tracker.js';
@@ -97,10 +98,12 @@ import type { TurnTracker } from '../metrics/turn-tracker.js';
 import type { GitEfficiencyTracker } from '../metrics/git-efficiency-tracker.js';
 import {
   CONTEXT_EFFICIENCY_TOOL,
+  CONTEXT_TRACKING_TOOL,
   LATENCY_PERCENTILES_TOOL,
   TASK_COMPLETION_TOOL,
   MODEL_USAGE_TOOL,
   handleGetContextEfficiency,
+  handleGetContextTracking,
   handleGetLatencyPercentiles,
   handleGetTaskCompletionRate,
   handleGetModelUsage,
@@ -360,6 +363,7 @@ export interface ToolRegistrationOptions {
   costPerOutcomeAnalyzer?: CostPerOutcomeAnalyzer;
   recommendationEngine?: RecommendationEngine;
   contextWindowTracker?: ContextWindowTracker;
+  contextTracker?: ContextTrackerRegistry;
   latencyTracker?: LatencyTracker;
   taskCompletionTracker?: TaskCompletionTracker;
   modelUsageTracker?: ModelUsageTracker;
@@ -434,6 +438,7 @@ export function registerTools(server: Server, options: ToolRegistrationOptions):
     costPerOutcomeAnalyzer,
     recommendationEngine,
     contextWindowTracker,
+    contextTracker,
     latencyTracker,
     taskCompletionTracker,
     modelUsageTracker,
@@ -519,6 +524,9 @@ export function registerTools(server: Server, options: ToolRegistrationOptions):
 
   if (contextWindowTracker) {
     tools.push(CONTEXT_EFFICIENCY_TOOL);
+  }
+  if (contextTracker) {
+    tools.push(CONTEXT_TRACKING_TOOL);
   }
   if (latencyTracker) {
     tools.push(LATENCY_PERCENTILES_TOOL);
@@ -1061,6 +1069,21 @@ export function registerTools(server: Server, options: ToolRegistrationOptions):
             };
           }
           return handleGetContextEfficiency(contextWindowTracker);
+        }
+
+        case 'nr_observe_get_context_tracking': {
+          if (!contextTracker) {
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: JSON.stringify({ error: 'ContextTracker not available' }),
+                },
+              ],
+              isError: true,
+            };
+          }
+          return handleGetContextTracking(contextTracker);
         }
 
         case 'nr_observe_get_latency_percentiles': {

@@ -9,6 +9,7 @@
  */
 
 import type { ContextWindowTracker } from '../metrics/context-window-tracker.js';
+import type { ContextTrackerRegistry } from '../metrics/context-tracker.js';
 import type { LatencyTracker } from '../metrics/latency-tracker.js';
 import type { TaskCompletionTracker } from '../metrics/task-completion-tracker.js';
 import type { ModelUsageTracker } from '../metrics/model-usage-tracker.js';
@@ -50,6 +51,14 @@ export const MODEL_USAGE_TOOL = {
   annotations: { readOnlyHint: true },
 };
 
+export const CONTEXT_TRACKING_TOOL = {
+  name: 'nr_observe_get_context_tracking',
+  description:
+    'Get context window tracking: per-turn token growth, category breakdown (System/Tools/User/Assistant), fill percentage, and per-tool output contribution. Shows which tools consume the most context.',
+  inputSchema: { type: 'object' as const, properties: {} },
+  annotations: { readOnlyHint: true },
+};
+
 // ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
@@ -80,6 +89,14 @@ export function handleGetTaskCompletionRate(
 }
 
 export function handleGetModelUsage(tracker: ModelUsageTracker): {
+  content: Array<{ type: 'text'; text: string }>;
+} {
+  return {
+    content: [{ type: 'text' as const, text: JSON.stringify(tracker.getMetrics(), null, 2) }],
+  };
+}
+
+export function handleGetContextTracking(tracker: ContextTrackerRegistry): {
   content: Array<{ type: 'text'; text: string }>;
 } {
   return {

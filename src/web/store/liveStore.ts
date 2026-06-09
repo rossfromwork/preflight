@@ -34,17 +34,38 @@ export interface AlertEvent {
   readonly firedAt: number;
 }
 
+export interface ContextUpdateEvent {
+  readonly sessionId: string;
+  readonly turnNumber: number;
+  readonly totalTokens: number;
+  readonly fillPercent: number;
+  readonly breakdown: {
+    readonly system: number;
+    readonly tools: number;
+    readonly user: number;
+    readonly assistant: number;
+  };
+  readonly growth: {
+    readonly startTokens: number;
+    readonly currentTokens: number;
+    readonly delta: number;
+  };
+  readonly topTools: ReadonlyArray<{ readonly tool: string; readonly estimatedTokens: number }>;
+}
+
 interface LiveState {
   readonly connected: boolean;
   readonly recentToolCalls: ToolCallEvent[];
   readonly cost: CostUpdateEvent | null;
   readonly antiPatterns: AntiPatternEvent[];
+  readonly contextBySession: Map<string, ContextUpdateEvent>;
   readonly firingAlerts: Map<string, AlertEvent>;
   readonly dismissedAlerts: Set<string>;
   setConnected(v: boolean): void;
   pushToolCall(e: ToolCallEvent): void;
   setCost(c: CostUpdateEvent): void;
   pushAntiPattern(e: AntiPatternEvent): void;
+  setContext(c: ContextUpdateEvent): void;
   addOrUpdateAlert(e: AlertEvent): void;
   clearAlert(id: string): void;
   dismissAlert(id: string): void;
@@ -58,6 +79,7 @@ export const useLiveStore = create<LiveState>((set) => ({
   recentToolCalls: [],
   cost: null,
   antiPatterns: [],
+  contextBySession: new Map(),
   firingAlerts: new Map(),
   dismissedAlerts: new Set(),
 
@@ -74,6 +96,13 @@ export const useLiveStore = create<LiveState>((set) => ({
     }),
 
   setCost: (c) => set({ cost: c }),
+
+  setContext: (c) =>
+    set((s) => {
+      const next = new Map(s.contextBySession);
+      next.set(c.sessionId, c);
+      return { contextBySession: next };
+    }),
 
   pushAntiPattern: (e) =>
     set((s) => {

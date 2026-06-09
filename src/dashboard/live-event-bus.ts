@@ -35,10 +35,30 @@ export interface AlertEvent {
   readonly firedAt: number;
 }
 
+export interface ContextUpdateEvent {
+  readonly sessionId: string;
+  readonly turnNumber: number;
+  readonly totalTokens: number;
+  readonly fillPercent: number;
+  readonly breakdown: {
+    readonly system: number;
+    readonly tools: number;
+    readonly user: number;
+    readonly assistant: number;
+  };
+  readonly growth: {
+    readonly startTokens: number;
+    readonly currentTokens: number;
+    readonly delta: number;
+  };
+  readonly topTools: ReadonlyArray<{ readonly tool: string; readonly estimatedTokens: number }>;
+}
+
 export type LiveEventMap = {
   'tool-call': ToolCallEvent;
   'cost-update': CostUpdateEvent;
   'anti-pattern': AntiPatternEvent;
+  'context-update': ContextUpdateEvent;
   heartbeat: HeartbeatEvent;
   alert: AlertEvent;
 };
