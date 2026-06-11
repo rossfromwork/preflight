@@ -151,6 +151,31 @@ describe('mergeSettings', () => {
     expect(result.otherSetting).toBe(true);
   });
 
+  it('preserves hook entries from other tools that use a non-standard shape', () => {
+    const existing = {
+      hooks: {
+        PreToolUse: [{ matcher: 'Bash', command: 'some-other-tool --pre' }],
+        PostToolUse: [{ matcher: 'Edit', command: 'some-other-tool --post' }],
+      },
+    };
+
+    const result = mergeSettings(existing);
+
+    const hooks = result.hooks as Record<string, unknown[]>;
+
+    // Pre: non-standard entry preserved, NR entry appended
+    expect(hooks.PreToolUse).toHaveLength(2);
+    expect(hooks.PreToolUse[0]).toEqual({ matcher: 'Bash', command: 'some-other-tool --pre' });
+    const preNr = hooks.PreToolUse[1] as Record<string, unknown>;
+    expect(preNr.hooks).toEqual([{ type: 'command', command: 'nr-ai-observe pre-tool' }]);
+
+    // Post: same behaviour on the PostToolUse branch
+    expect(hooks.PostToolUse).toHaveLength(2);
+    expect(hooks.PostToolUse[0]).toEqual({ matcher: 'Edit', command: 'some-other-tool --post' });
+    const postNr = hooks.PostToolUse[1] as Record<string, unknown>;
+    expect(postNr.hooks).toEqual([{ type: 'command', command: 'nr-ai-observe post-tool' }]);
+  });
+
   it('is idempotent — running twice does not duplicate entries', () => {
     const once = mergeSettings({});
     const twice = mergeSettings(once);
@@ -245,6 +270,20 @@ describe('mergeMcpConfig', () => {
 
     const servers = twice.mcpServers as Record<string, unknown>;
     expect(Object.keys(servers)).toHaveLength(1);
+  });
+
+  it('preserves remote/HTTP MCP server entries (url transport, no command/args)', () => {
+    const existing = {
+      mcpServers: {
+        'remote-server': { url: 'https://example.com/mcp', transport: 'sse' },
+      },
+    };
+
+    const result = mergeMcpConfig(existing);
+
+    const servers = result.mcpServers as Record<string, unknown>;
+    expect(servers['remote-server']).toEqual({ url: 'https://example.com/mcp', transport: 'sse' });
+    expect(servers['nr-ai-observability']).toBeDefined();
   });
 });
 

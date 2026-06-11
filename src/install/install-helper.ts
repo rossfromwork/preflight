@@ -135,24 +135,22 @@ function filterNrObserveEntries(entries: unknown[]): unknown[] {
 // Zod schemas — validate existing file shapes before merging
 // ---------------------------------------------------------------------------
 
-const HookCommandSchema = z.object({ type: z.string(), command: z.string() }).passthrough();
-const HookEntrySchema = z
-  .object({ matcher: z.string(), hooks: z.array(HookCommandSchema) })
-  .passthrough();
+// Hooks: only require that PreToolUse/PostToolUse are arrays — individual
+// entries may come from other tools in any shape, so we don't validate them.
 const HooksFieldSchema = z
   .object({
-    PreToolUse: z.array(HookEntrySchema).optional(),
-    PostToolUse: z.array(HookEntrySchema).optional(),
+    PreToolUse: z.array(z.unknown()).optional(),
+    PostToolUse: z.array(z.unknown()).optional(),
   })
   .passthrough();
 const SettingsSchema = z.object({ hooks: HooksFieldSchema.optional() }).passthrough();
 
-const McpServerEntrySchema = z
-  .object({ command: z.string(), args: z.array(z.string()) })
-  .passthrough();
+// MCP config: only require mcpServers is a string-keyed record — individual
+// entries may be stdio ({command, args}) or remote ({url, transport}), so we
+// don't validate their shape.
 const McpConfigSchema = z
   .object({
-    mcpServers: z.record(z.string(), McpServerEntrySchema).optional(),
+    mcpServers: z.record(z.string(), z.unknown()).optional(),
   })
   .passthrough();
 
