@@ -220,12 +220,16 @@ function handleInstall(options: {
 }): void {
   const scope = options.project ? 'project' : 'user';
 
+  // Resolve the full binary path at install time so hooks work in non-login
+  // shells (e.g. /bin/sh) that don't inherit NVM/nix/Homebrew PATH entries.
+  const binPath = resolveBinaryPath();
+
   // Hooks go in settings.json
   const settingsPath = detectSettingsPath(scope);
   let mergedSettings: ReturnType<typeof mergeSettings>;
   try {
     const existingSettings = readJsonFile(settingsPath);
-    mergedSettings = mergeSettings(existingSettings);
+    mergedSettings = mergeSettings(existingSettings, binPath);
   } catch (err) {
     console.error(
       `✗ Failed to update ${settingsPath}: ${err instanceof Error ? err.message : String(err)}`,
@@ -239,7 +243,7 @@ function handleInstall(options: {
   let mergedMcp: ReturnType<typeof mergeMcpConfig>;
   try {
     const existingMcp = readJsonFile(mcpPath);
-    mergedMcp = mergeMcpConfig(existingMcp);
+    mergedMcp = mergeMcpConfig(existingMcp, binPath);
   } catch (err) {
     console.error(
       `✗ Failed to update ${mcpPath}: ${err instanceof Error ? err.message : String(err)}`,
@@ -261,7 +265,7 @@ function handleInstall(options: {
     print('\n⚠ Both --license-key and --account-id are required to save NR config. Skipped.');
   }
 
-  if (verifyBinaryOnPath()) {
+  if (binPath !== null) {
     print('\n✓ nr-ai-observe is on your PATH');
   } else {
     printPathWarning();

@@ -925,11 +925,14 @@ describe('setupWizard environment and nrApiKey steps', () => {
     mockedFs.writeFileSync.mockReturnValue(undefined);
     mockedFs.readFileSync.mockReturnValue('{}');
     Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+    // Prevent the test runner's real NEW_RELIC_API_KEY from bleeding in as a default
+    delete process.env.NEW_RELIC_API_KEY;
   });
 
   afterEach(() => {
     stdoutSpy.mockRestore();
     stderrSpy.mockRestore();
+    delete process.env.NEW_RELIC_API_KEY;
   });
 
   function answers(...values: string[]): void {

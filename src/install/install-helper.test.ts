@@ -39,7 +39,7 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('generateHookEntries', () => {
-  it('returns PreToolUse and PostToolUse entries in Claude Code hook format', () => {
+  it('returns bare command names when no binPath provided', () => {
     const hooks = generateHookEntries();
 
     expect(hooks.PreToolUse).toEqual([
@@ -49,14 +49,62 @@ describe('generateHookEntries', () => {
       { matcher: '', hooks: [{ type: 'command', command: 'nr-ai-observe post-tool' }] },
     ]);
   });
+
+  it('uses quoted full path when binPath is provided', () => {
+    const hooks = generateHookEntries('/usr/local/bin/nr-ai-observe');
+
+    expect(hooks.PreToolUse).toEqual([
+      {
+        matcher: '',
+        hooks: [{ type: 'command', command: '"/usr/local/bin/nr-ai-observe" pre-tool' }],
+      },
+    ]);
+    expect(hooks.PostToolUse).toEqual([
+      {
+        matcher: '',
+        hooks: [{ type: 'command', command: '"/usr/local/bin/nr-ai-observe" post-tool' }],
+      },
+    ]);
+  });
+
+  it('quotes paths that contain spaces', () => {
+    const hooks = generateHookEntries('/Users/John Doe/.nvm/versions/node/v24/bin/nr-ai-observe');
+
+    expect(hooks.PreToolUse[0].hooks[0].command).toBe(
+      '"/Users/John Doe/.nvm/versions/node/v24/bin/nr-ai-observe" pre-tool',
+    );
+  });
+
+  it('falls back to bare command when binPath is null', () => {
+    const hooks = generateHookEntries(null);
+
+    expect(hooks.PreToolUse[0].hooks[0].command).toBe('nr-ai-observe pre-tool');
+  });
 });
 
 describe('generateMcpServerEntry', () => {
-  it('returns nr-ai-observability MCP server config', () => {
+  it('returns bare command when no binPath provided', () => {
     const entry = generateMcpServerEntry();
 
     expect(entry).toEqual({
       'nr-ai-observability': { command: 'nr-ai-mcp-server', args: ['--stdio'] },
+    });
+  });
+
+  it('uses full path derived from binPath bin directory', () => {
+    const entry = generateMcpServerEntry('/usr/local/bin/nr-ai-observe');
+
+    expect(entry).toEqual({
+      'nr-ai-observability': { command: '/usr/local/bin/nr-ai-mcp-server', args: ['--stdio'] },
+    });
+  });
+
+  it('falls back to bare command when binPath is null', () => {
+    const entry = generateMcpServerEntry(null);
+
+    expect(entry['nr-ai-observability']).toEqual({
+      command: 'nr-ai-mcp-server',
+      args: ['--stdio'],
     });
   });
 });
@@ -184,6 +232,43 @@ describe('mergeSettings', () => {
     expect(hooks.PreToolUse).toHaveLength(1);
     expect(hooks.PostToolUse).toHaveLength(1);
   });
+
+  it('upgrades a bare-name hook entry to a quoted absolute path on re-install', () => {
+    const withBare = mergeSettings({});
+    const withAbsolute = mergeSettings(withBare, '/usr/local/bin/nr-ai-observe');
+
+    const hooks = withAbsolute.hooks as Record<string, unknown[]>;
+    expect(hooks.PreToolUse).toHaveLength(1);
+    expect(hooks.PostToolUse).toHaveLength(1);
+    const pre = hooks.PreToolUse[0] as Record<string, unknown>;
+    expect((pre.hooks as Array<Record<string, string>>)[0].command).toBe(
+      '"/usr/local/bin/nr-ai-observe" pre-tool',
+    );
+  });
+
+  it('upgrades a stale absolute-path hook entry to a new quoted path on re-install', () => {
+    const withOld = mergeSettings({}, '/old/path/nr-ai-observe');
+    const withNew = mergeSettings(withOld, '/new/path/nr-ai-observe');
+
+    const hooks = withNew.hooks as Record<string, unknown[]>;
+    expect(hooks.PreToolUse).toHaveLength(1);
+    const pre = hooks.PreToolUse[0] as Record<string, unknown>;
+    expect((pre.hooks as Array<Record<string, string>>)[0].command).toBe(
+      '"/new/path/nr-ai-observe" pre-tool',
+    );
+  });
+
+  it('preserves an existing absolute-path hook when re-installing with null binPath', () => {
+    const withAbsolute = mergeSettings({}, '/usr/local/bin/nr-ai-observe');
+    const reInstalled = mergeSettings(withAbsolute, null);
+
+    const hooks = reInstalled.hooks as Record<string, unknown[]>;
+    expect(hooks.PreToolUse).toHaveLength(1);
+    const pre = hooks.PreToolUse[0] as Record<string, unknown>;
+    expect((pre.hooks as Array<Record<string, string>>)[0].command).toBe(
+      '"/usr/local/bin/nr-ai-observe" pre-tool',
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -215,6 +300,13 @@ describe('removeSettings', () => {
 
   it('cleans up empty hooks object', () => {
     const settings = mergeSettings({});
+    const result = removeSettings(settings);
+
+    expect(result.hooks).toBeUndefined();
+  });
+
+  it('removes quoted absolute-path entries installed by the new code path', () => {
+    const settings = mergeSettings({}, '/usr/local/bin/nr-ai-observe');
     const result = removeSettings(settings);
 
     expect(result.hooks).toBeUndefined();
@@ -270,6 +362,61 @@ describe('mergeMcpConfig', () => {
 
     const servers = twice.mcpServers as Record<string, unknown>;
     expect(Object.keys(servers)).toHaveLength(1);
+  });
+
+  it('upgrades a bare-name MCP command to an absolute path on re-install', () => {
+    const withBare = mergeMcpConfig({});
+    const withAbsolute = mergeMcpConfig(withBare, '/usr/local/bin/nr-ai-observe');
+
+    const servers = withAbsolute.mcpServers as Record<string, unknown>;
+    expect(Object.keys(servers)).toHaveLength(1);
+    expect(servers['nr-ai-observability']).toEqual({
+      command: '/usr/local/bin/nr-ai-mcp-server',
+      args: ['--stdio'],
+    });
+  });
+
+  it('upgrades a stale absolute-path MCP command on re-install', () => {
+    const withOld = mergeMcpConfig({}, '/old/path/nr-ai-observe');
+    const withNew = mergeMcpConfig(withOld, '/new/path/nr-ai-observe');
+
+    const servers = withNew.mcpServers as Record<string, unknown>;
+    expect(servers['nr-ai-observability']).toEqual({
+      command: '/new/path/nr-ai-mcp-server',
+      args: ['--stdio'],
+    });
+  });
+
+  it('preserves user-added fields when upgrading the MCP command', () => {
+    const existing = {
+      mcpServers: {
+        'nr-ai-observability': {
+          command: 'nr-ai-mcp-server',
+          args: ['--stdio', '--config', '/custom/config.json'],
+          env: { MY_VAR: 'value' },
+        },
+      },
+    };
+
+    const result = mergeMcpConfig(existing, '/usr/local/bin/nr-ai-observe');
+
+    const servers = result.mcpServers as Record<string, unknown>;
+    expect(servers['nr-ai-observability']).toEqual({
+      command: '/usr/local/bin/nr-ai-mcp-server',
+      args: ['--stdio'],
+      env: { MY_VAR: 'value' },
+    });
+  });
+
+  it('preserves an existing absolute-path MCP command when re-installing with null binPath', () => {
+    const withAbsolute = mergeMcpConfig({}, '/usr/local/bin/nr-ai-observe');
+    const reInstalled = mergeMcpConfig(withAbsolute, null);
+
+    const servers = reInstalled.mcpServers as Record<string, unknown>;
+    expect(servers['nr-ai-observability']).toEqual({
+      command: '/usr/local/bin/nr-ai-mcp-server',
+      args: ['--stdio'],
+    });
   });
 
   it('preserves remote/HTTP MCP server entries (url transport, no command/args)', () => {

@@ -4,7 +4,7 @@
  * All functions are side-effect-free — file I/O happens in the CLI layer (cli.ts).
  */
 
-import { resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { z } from 'zod';
 
@@ -12,12 +12,15 @@ import { z } from 'zod';
 // Constants
 // ---------------------------------------------------------------------------
 
-const HOOK_COMMAND_PRE = 'nr-ai-observe pre-tool';
-const HOOK_COMMAND_POST = 'nr-ai-observe post-tool';
 const HOOK_MATCHER = '';
 const MCP_SERVER_KEY = 'nr-ai-observability';
 const MCP_SERVER_COMMAND = 'nr-ai-mcp-server';
-const NR_OBSERVE_MARKER = 'nr-ai-observe';
+// Matches the hook commands this installer writes, in both bare-name and
+// absolute-path forms (quoted or unquoted):
+//   nr-ai-observe pre-tool
+//   /abs/path/nr-ai-observe pre-tool
+//   "/quoted/path/nr-ai-observe" pre-tool
+const NR_HOOK_RE = /nr-ai-observe"?\s+(?:pre|post)-tool/;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -52,20 +55,25 @@ export interface NrObserveConfig {
 // Generators
 // ---------------------------------------------------------------------------
 
-export function generateHookEntries(): HookEntries {
+export function generateHookEntries(binPath?: string | null): HookEntries {
+  // Quote the path so shells with sh -c don't split on spaces (e.g. /Users/John Doe/...).
+  const bin = binPath ? `"${binPath.replace(/"/g, '\\"')}"` : 'nr-ai-observe';
   return {
     PreToolUse: [
-      { matcher: HOOK_MATCHER, hooks: [{ type: 'command', command: HOOK_COMMAND_PRE }] },
+      { matcher: HOOK_MATCHER, hooks: [{ type: 'command', command: `${bin} pre-tool` }] },
     ],
     PostToolUse: [
-      { matcher: HOOK_MATCHER, hooks: [{ type: 'command', command: HOOK_COMMAND_POST }] },
+      { matcher: HOOK_MATCHER, hooks: [{ type: 'command', command: `${bin} post-tool` }] },
     ],
   };
 }
 
-export function generateMcpServerEntry(): Record<string, McpServerConfig> {
+export function generateMcpServerEntry(binPath?: string | null): Record<string, McpServerConfig> {
+  // Both binaries are declared in the same package.json bin: field, so a
+  // global npm install / npm link always places them in the same directory.
+  const command = binPath ? join(dirname(binPath), MCP_SERVER_COMMAND) : MCP_SERVER_COMMAND;
   return {
-    [MCP_SERVER_KEY]: { command: MCP_SERVER_COMMAND, args: ['--stdio'] },
+    [MCP_SERVER_KEY]: { command, args: ['--stdio'] },
   };
 }
 
@@ -107,24 +115,16 @@ function entryContainsNrObserve(entry: unknown): boolean {
         h !== null &&
         'command' in (h as Record<string, unknown>) &&
         typeof (h as Record<string, unknown>).command === 'string' &&
-        ((h as Record<string, unknown>).command as string).includes(NR_OBSERVE_MARKER),
+        NR_HOOK_RE.test((h as Record<string, unknown>).command as string),
     );
   }
 
   // Legacy flat format: { matcher, command }
-  if (
-    'command' in obj &&
-    typeof obj.command === 'string' &&
-    obj.command.includes(NR_OBSERVE_MARKER)
-  ) {
+  if ('command' in obj && typeof obj.command === 'string' && NR_HOOK_RE.test(obj.command)) {
     return true;
   }
 
   return false;
-}
-
-function hasNrObserveCommand(entries: unknown[]): boolean {
-  return entries.some(entryContainsNrObserve);
 }
 
 function filterNrObserveEntries(entries: unknown[]): unknown[] {
@@ -158,7 +158,10 @@ const McpConfigSchema = z
 // mergeSettings
 // ---------------------------------------------------------------------------
 
-export function mergeSettings(existing: Record<string, unknown>): Record<string, unknown> {
+export function mergeSettings(
+  existing: Record<string, unknown>,
+  binPath?: string | null,
+): Record<string, unknown> {
   const parsed = SettingsSchema.safeParse(existing);
   if (!parsed.success) {
     throw new Error(
@@ -167,7 +170,7 @@ export function mergeSettings(existing: Record<string, unknown>): Record<string,
   }
 
   const result = { ...existing };
-  const hookEntries = generateHookEntries();
+  const hookEntries = generateHookEntries(binPath);
 
   // --- Hooks ---
   const hooks: Record<string, unknown> =
@@ -178,11 +181,19 @@ export function mergeSettings(existing: Record<string, unknown>): Record<string,
   for (const hookType of ['PreToolUse', 'PostToolUse'] as const) {
     const existingArr = Array.isArray(hooks[hookType]) ? [...(hooks[hookType] as unknown[])] : [];
 
-    if (!hasNrObserveCommand(existingArr)) {
-      existingArr.push(...hookEntries[hookType]);
+    if (binPath !== null && binPath !== undefined) {
+      // Resolved path available: remove stale entry and re-add with the current
+      // absolute path so re-install always upgrades a bare-name or outdated entry.
+      const withoutNr = filterNrObserveEntries(existingArr);
+      hooks[hookType] = [...withoutNr, ...hookEntries[hookType]];
+    } else {
+      // No path resolved (binary not on PATH): leave any existing entry untouched
+      // so a working absolute-path hook is not downgraded to a bare name.
+      if (!existingArr.some(entryContainsNrObserve)) {
+        existingArr.push(...hookEntries[hookType]);
+      }
+      hooks[hookType] = existingArr;
     }
-
-    hooks[hookType] = existingArr;
   }
 
   result.hooks = hooks;
@@ -194,7 +205,10 @@ export function mergeSettings(existing: Record<string, unknown>): Record<string,
 // mergeMcpConfig — operates on ~/.mcp.json (separate from settings.json)
 // ---------------------------------------------------------------------------
 
-export function mergeMcpConfig(existing: Record<string, unknown>): Record<string, unknown> {
+export function mergeMcpConfig(
+  existing: Record<string, unknown>,
+  binPath?: string | null,
+): Record<string, unknown> {
   const parsed = McpConfigSchema.safeParse(existing);
   if (!parsed.success) {
     throw new Error(
@@ -209,9 +223,19 @@ export function mergeMcpConfig(existing: Record<string, unknown>): Record<string
       ? { ...(result.mcpServers as Record<string, unknown>) }
       : {};
 
-  if (!(MCP_SERVER_KEY in mcpServers)) {
-    const entry = generateMcpServerEntry();
-    mcpServers[MCP_SERVER_KEY] = entry[MCP_SERVER_KEY];
+  if (binPath !== null && binPath !== undefined) {
+    // Resolved path available: merge new command/args into existing entry,
+    // preserving any user-added fields (env, timeout, etc.).
+    const newEntry = generateMcpServerEntry(binPath);
+    const existingEntry =
+      typeof mcpServers[MCP_SERVER_KEY] === 'object' && mcpServers[MCP_SERVER_KEY] !== null
+        ? (mcpServers[MCP_SERVER_KEY] as Record<string, unknown>)
+        : {};
+    mcpServers[MCP_SERVER_KEY] = { ...existingEntry, ...newEntry[MCP_SERVER_KEY] };
+  } else if (!(MCP_SERVER_KEY in mcpServers)) {
+    // No path resolved: only add if absent so a working absolute-path entry
+    // is not downgraded to a bare name.
+    mcpServers[MCP_SERVER_KEY] = generateMcpServerEntry(null)[MCP_SERVER_KEY];
   }
 
   result.mcpServers = mcpServers;
