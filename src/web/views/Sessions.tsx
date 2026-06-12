@@ -40,6 +40,7 @@ interface SessionRow {
   readonly sessionId: string;
   readonly sessionName?: string | null;
   readonly startTime?: string | number;
+  readonly durationMs?: number;
   readonly toolCallCount?: number;
   readonly estimatedCostUsd?: number | null;
   readonly outcome?: string | null;
@@ -125,19 +126,25 @@ const TOOL_ICONS: Record<string, string> = {
 
 const LIVE_REFETCH_MS = 3_000;
 
-type SortKey = 'date' | 'cost' | 'calls';
+type SortKey = 'date' | 'lastActive' | 'cost' | 'calls';
+
+function startTimeMs(row: SessionRow): number {
+  return typeof row.startTime === 'number' ? row.startTime : new Date(row.startTime ?? 0).getTime();
+}
+
+function lastActiveMs(row: SessionRow): number {
+  const start = startTimeMs(row);
+  return start + (row.durationMs ?? 0);
+}
 
 function sortSessions(rows: SessionRow[], key: SortKey): SessionRow[] {
   const sorted = [...rows];
   switch (key) {
     case 'date':
-      sorted.sort((a, b) => {
-        const ta =
-          typeof a.startTime === 'number' ? a.startTime : new Date(a.startTime ?? 0).getTime();
-        const tb =
-          typeof b.startTime === 'number' ? b.startTime : new Date(b.startTime ?? 0).getTime();
-        return tb - ta;
-      });
+      sorted.sort((a, b) => startTimeMs(b) - startTimeMs(a));
+      break;
+    case 'lastActive':
+      sorted.sort((a, b) => lastActiveMs(b) - lastActiveMs(a));
       break;
     case 'cost':
       sorted.sort((a, b) => (b.estimatedCostUsd ?? 0) - (a.estimatedCostUsd ?? 0));
@@ -222,6 +229,7 @@ export function Sessions(): JSX.Element {
                 className="text-[10px] bg-surface-5 border border-border-medium rounded-md px-1.5 py-0.5 text-ink-subtle"
               >
                 <option value="date">Newest</option>
+                <option value="lastActive">Last active</option>
                 <option value="cost">Cost</option>
                 <option value="calls">Calls</option>
               </select>
@@ -258,8 +266,19 @@ export function Sessions(): JSX.Element {
                   </div>
                   <div className="flex justify-between mt-1 text-ink-subtle text-[11px] tabular-nums">
                     <span>{r.toolCallCount ?? 0} calls</span>
-                    <span className="text-ink-muted">
-                      {r.startTime ? fmtDateTime(r.startTime) : '—'}
+                    <span
+                      className="text-ink-muted"
+                      title={
+                        sortKey === 'lastActive' && r.startTime
+                          ? `Started ${fmtDateTime(r.startTime)}`
+                          : undefined
+                      }
+                    >
+                      {!r.startTime
+                        ? '—'
+                        : sortKey === 'lastActive'
+                          ? fmtDateTime(lastActiveMs(r))
+                          : fmtDateTime(r.startTime)}
                     </span>
                     <span>
                       {r.estimatedCostUsd != null ? `$${r.estimatedCostUsd.toFixed(2)}` : '—'}

@@ -830,7 +830,18 @@ function LiveSessionPane({
         });
       }
     }
-    return [...byId.values()].sort((a, b) => (b.startTime ?? 0) - (a.startTime ?? 0)).slice(0, 10);
+    // Sort by last activity so a long-running session whose start time has
+    // dropped out of the top-N still surfaces while it's actively in use.
+    // For live sessions the live registry's `lastActivity` is authoritative
+    // (fresh per touch); for persisted ones fall back to `startTime +
+    // durationMs`, then `startTime`.
+    const lastActivityFor = (s: SessionSummary): number => {
+      const live = liveById.get(s.sessionId);
+      if (live) return live.lastActivity;
+      if (s.startTime != null && s.durationMs != null) return s.startTime + s.durationMs;
+      return s.startTime ?? 0;
+    };
+    return [...byId.values()].sort((a, b) => lastActivityFor(b) - lastActivityFor(a)).slice(0, 10);
   }, [sessions, liveSessions]);
 
   const timeline = replay?.timeline ?? [];
@@ -863,8 +874,11 @@ function LiveSessionPane({
                 {isSessionLive ? (
                   <LiveBadge label="live" size="sm" />
                 ) : (
-                  <span className="text-[10px] text-ink-muted">
-                    {s.startTime ? fmtTimeOfDay(s.startTime) : ''}
+                  <span
+                    className="text-[10px] text-ink-muted"
+                    title={s.startTime ? `Started ${fmtTimeOfDay(s.startTime)}` : undefined}
+                  >
+                    {s.startTime ? fmtTimeOfDay(s.startTime + (s.durationMs ?? 0)) : ''}
                   </span>
                 )}
               </div>

@@ -673,11 +673,17 @@ export function createApiHandler(
       for (const id of deps.liveSessionRegistry.getLiveSessions()) {
         if (!knownIds.has(id)) {
           const stats = perSession.get(id);
+          // getLastActivity is registry-maintained and survives buffer drains,
+          // so use it as the stable upper bound for durationMs. Without this,
+          // durationMs collapses to 0 every 5s when the harvest scheduler drains
+          // the buffer and perSession rebuilds from an empty set of records.
+          const lastActivityTs = deps.liveSessionRegistry.getLastActivity?.(id) ?? stats?.lastTs;
+          const sessionStart = stats?.firstTs ?? lastActivityTs ?? Date.now();
           sliced.push({
             sessionId: id,
             sessionName: deps.liveSessionRegistry.getSessionName(id),
-            startTime: stats?.firstTs ?? Date.now(),
-            durationMs: stats ? stats.lastTs - stats.firstTs : 0,
+            startTime: sessionStart,
+            durationMs: lastActivityTs != null ? Math.max(0, lastActivityTs - sessionStart) : 0,
             toolCallCount: stats?.count ?? 0,
             estimatedCostUsd: null,
           });
