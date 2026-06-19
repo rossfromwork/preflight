@@ -136,6 +136,23 @@ html.light .glass-card:not(.glass-card-static):hover {
     0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
+/* Preflight brand text (yellow-green, matches logo gradient) */
+.brand-text {
+  width: fit-content;
+  background: linear-gradient(90deg, #D2FA37 0%, #1CE783 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+html.light .brand-text {
+  width: fit-content;
+  background: linear-gradient(90deg, #5c6b00 0%, #0a7047 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
 /* Gradient text (purple → pink → green) */
 .gradient-text {
   width: fit-content;
