@@ -16,7 +16,7 @@ Think of it like Google Analytics for your AI pair programmer.
 
 ## Before You Start
 
-Three things are required. A New Relic account is optional — the tool works in [local mode](#local-mode) without one.
+Two things are always required. A New Relic account is optional — the tool works in [local mode](#local-mode) without one.
 
 ### 1. An AI coding tool
 
@@ -55,20 +55,11 @@ You'll also need your **Account ID** — a number visible in the URL when you're
 
 ## Quick Start
 
-> **Pre-release:** The npm package will be available after the public launch. Until then, install from source:
->
-> ```bash
-> git clone https://github.com/newrelic-experimental/preflight
-> cd preflight
-> nvm use        # Node 24 (from .nvmrc)
-> npm install
-> npm run build
-> npm link       # puts preflight on your PATH
-> ```
->
-> After launch, Step 1 will simplify to `npm install -g @newrelic/preflight`.
+**Step 1 — Install**
 
-**Step 1 — Put `preflight` on your PATH** _(see above)_
+```bash
+npm install -g @newrelic/preflight
+```
 
 **Step 2 — Run the interactive setup wizard**
 
@@ -76,7 +67,7 @@ You'll also need your **Account ID** — a number visible in the URL when you're
 preflight setup
 ```
 
-The wizard asks for your license key, account ID, environment/region (US, EU, FedRAMP), and optionally a NR API key for team queries. It validates both keys live against New Relic before continuing, and pre-fills your developer name from the email on the API key. Most people are running in under 5 minutes.
+The wizard first asks for a mode: choose **cloud** to send telemetry to New Relic, or **local** for offline dashboard-only use. In cloud mode it then asks for your license key, account ID, region (US, EU, FedRAMP), and optionally a user API key. It validates keys live before continuing and pre-fills your developer name from the email on the API key. Most people are running in under 5 minutes.
 
 If `NEW_RELIC_LICENSE_KEY`, `NEW_RELIC_ACCOUNT_ID`, or `NEW_RELIC_API_KEY` are already set in your shell environment, the wizard detects them and lets you press Enter to accept — no copy-paste needed.
 
@@ -88,7 +79,7 @@ preflight install \
   --account-id YOUR_ACCOUNT_ID
 ```
 
-This registers a hook in your Claude Code settings so every tool call is captured automatically. You only run this once.
+This installs the hook scripts in your Claude Code settings and registers the MCP server in `~/.mcp.json`, so every tool call is captured and the `nr_observe_*` tools are available in Claude Code. You only run this once.
 
 **Step 3 — Deploy dashboards** _(optional but recommended)_
 
@@ -105,11 +96,15 @@ This creates 7 dashboards in your NR account. Find them under **Dashboards** →
 
 **Step 4 — Restart Claude Code and verify**
 
-Restart Claude Code, then type this into the chat:
+Restart Claude Code, then verify the MCP server connected:
+
+> _Can you call the `nr_observe_health` tool and show me the result?_
+
+You should see `"status": "ok"` with a version and uptime. Then make any request to Claude Code (triggering at least one tool call), and check session tracking:
 
 > _Can you call the `nr_observe_get_session_stats` tool and show me the result?_
 
-If you get back a response with tool call counts and timing data, it's working.
+If you get back tool call counts and timing data, it's working.
 
 ---
 
@@ -151,7 +146,7 @@ Then run `preflight setup` exactly as in the Quick Start.
 
 ---
 
-## Talking to the Observatory
+## Talking to Preflight
 
 Once installed, Claude Code can query live session data on your behalf. Just ask it in plain English — or use the tool names directly:
 
@@ -248,8 +243,8 @@ The easiest way to configure is through the setup wizard (`preflight setup`). To
 
 ```json
 {
-  "licenseKey": "175cae4b...",
-  "accountId": 12345,
+  "licenseKey": "aabbccdd...",
+  "accountId": "12345",
   "developer": "your-name",
   "sessionBudgetUsd": 1.0,
   "dailyBudgetUsd": 5.0,
@@ -311,7 +306,7 @@ This runs `git pull` followed by `npm run build` in the repo directory. Restart 
 
 ## Uninstalling
 
-To remove the Observatory hooks and MCP server from Claude Code:
+To remove the Preflight hooks and MCP server from Claude Code:
 
 ```bash
 preflight uninstall
@@ -376,7 +371,7 @@ In local mode:
 
 **With Claude Code** (default): the server runs via the MCP connection (`--stdio`). You don't launch it manually — Claude Code starts it automatically when you open a session, because `preflight install` registered it as an MCP server. The dashboard stays alive as long as your Claude Code session is open.
 
-**Standalone** (no Claude Code required): pass `--local` to run the dashboard server directly, without an MCP transport. Use this to browse the dashboard when Claude Code isn't running, or to observe non-Claude-Code sources that hit the hooks (e.g. Claude Agent SDK scripts). If the per-session MCP is also installed, only one process owns the dashboard at a time — whichever started first — and the other runs headless.
+**Standalone** (no Claude Code required): pass `--local` to run the dashboard server directly, without an MCP transport. Use this to browse the dashboard when Claude Code isn't running, or to observe non-Claude-Code sources that hit the hooks (e.g. scripts using the Anthropic SDK). If the per-session MCP is also installed, only one process owns the dashboard at a time — whichever started first — and the other runs headless.
 
 ```bash
 npm run build          # build once
@@ -436,9 +431,9 @@ Or set it in your config file as `digestWebhookUrl`, or configure it directly fr
 
 ## Glossary
 
-**MCP (Model Context Protocol)** — A standard that lets AI assistants like Claude Code discover and call external tools. The Observatory registers itself as an MCP server so Claude Code can call it directly.
+**MCP (Model Context Protocol)** — A standard that lets AI assistants like Claude Code discover and call external tools. Preflight registers itself as an MCP server so Claude Code can call it directly.
 
-**License key** — A NR credential for _sending_ data into New Relic. Looks like a long hex string (e.g., `175cae4b...`). Found under API Keys in NR One.
+**License key** — A NR credential for _sending_ data into New Relic. Looks like a long hex string ending in `NRAL`. Found under API Keys in NR One.
 
 **User API key** — A NR credential for _reading_ data and managing resources (dashboards, alerts). Starts with `NRAK-`. Create one under API Keys in NR One.
 
@@ -448,14 +443,14 @@ Or set it in your config file as `digestWebhookUrl`, or configure it directly fr
 
 **Token** — The unit AI models use to measure text length for billing. Roughly 3-4 characters per token. One page of text ≈ 500 tokens.
 
-**Hook** — A script that Claude Code calls automatically before and after every tool call. The Observatory uses this to capture tool call data without interrupting your workflow.
+**Hook** — A script that Claude Code calls automatically before and after every tool call. Preflight uses this to capture tool call data without interrupting your workflow.
 
 ---
 
 ## Requirements
 
 - **Node.js**: v22 or higher (`.nvmrc` pins v24 for development)
-- **New Relic account**: free tier works; you need a license key and a user API key
+- **New Relic account**: free tier works; you need a license key (a user API key is optional — only needed for deploying dashboards and alerts)
 - **An AI coding tool**: Claude Code, Cursor, Windsurf, GitHub Copilot, Zed, Continue.dev, or Amazon Q
 
 ---

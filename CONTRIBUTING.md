@@ -96,7 +96,7 @@ preflight/
     security/      # Audit trail + SSRF helpers
     tracing/       # OTel span lifecycle
     transport/     # NR ingest manager + log ingest
-    platforms/     # 8 platform adapters (Claude Code, Cursor, Windsurf, …)
+    platforms/     # 8 platform adapters — 7 named (Claude Code, Cursor, Windsurf, Copilot, Zed, Continue.dev, Amazon Q) + 1 generic MCP fallback
     digest/        # Slack digest formatter and sender
     install/       # preflight install / setup CLI
     alerts/        # Alert TS types (JSON files live in alerts/ at repo root)
@@ -269,7 +269,7 @@ Types: `Fix`, `Feat`, `Refactor`, `Chore`, `Test`, `Docs`
 If you used an AI coding assistant: add a `Co-Authored-By` trailer with the model name, e.g.:
 
 ```
-Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 ```
 
 ### Branches
@@ -423,7 +423,7 @@ Expected:
 ```json
 {
   "status": "ok",
-  "version": "1.x.x",
+  "version": "1.0.x",
   "developer": "your-name",
   "session_id": "some-uuid",
   "uptime_seconds": 3

@@ -205,9 +205,8 @@ export default {
   //
   // dashboard: {
   //   port: 7777,             // local HTTP port for the dashboard
-  //   host: '127.0.0.1',      // loopback only in v1; non-loopback values
-  //                           // are warned and overridden
-  //   openOnStart: false,     // (future) auto-open in your default browser
+  //   host: '127.0.0.1',      // non-loopback values are warned and overridden
+  //   openOnStart: false,
   // },
 
   // ── Model ─────────────────────────────────────────────────────────────────

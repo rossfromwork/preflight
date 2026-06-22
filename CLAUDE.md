@@ -410,7 +410,7 @@ Run `npm run lint` before committing to verify the lint target is still met.
 
 - Format: `Type: Short description` (e.g., `Fix #13: Re-queue events on send failure`)
 - Types: `Fix`, `Feat`, `Refactor`, `Chore`, `Test`, `Docs`
-- Include `Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>` when AI-assisted
+- Include `Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>` when AI-assisted
 - One logical change per commit
 
 ## Pull Requests

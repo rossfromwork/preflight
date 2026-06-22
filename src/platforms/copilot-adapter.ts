@@ -113,6 +113,6 @@ export class CopilotAdapter implements PlatformAdapter {
   }
 
   isSupported(): boolean {
-    return process.env.NR_AI_COPILOT_OBSERVER === 'active' || process.env.MCP_CLIENT === 'copilot';
+    return process.env.MCP_CLIENT === 'copilot' || process.env.NEW_RELIC_AI_PLATFORM === 'copilot';
   }
 }
