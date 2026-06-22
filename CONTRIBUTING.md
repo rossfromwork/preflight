@@ -12,9 +12,9 @@ There are two main integration points:
 
 1. **MCP Server (this repo)** — Hooks into Claude Code via the Model Context Protocol. Captures every tool call, computes metrics like efficiency scores and anti-pattern detection, and exposes MCP tools that Claude Code can query directly.
 
-2. **SDK Agent** — Lives in the separate `nr-ai-typescript-agent` repo. Wraps Anthropic, Google Gemini, OpenAI, AWS Bedrock, Mistral, and Cohere SDK clients so every API call is automatically instrumented.
+2. **SDK Agent** — A companion SDK agent (not included in this repo). Wraps Anthropic, Google Gemini, OpenAI, AWS Bedrock, Mistral, and Cohere SDK clients so every API call is automatically instrumented.
 
-Both projects share a common transport layer (`src/shared/`, synced from `nr-ai-typescript-shared`) that handles event buffering, metric aggregation, and HTTP delivery to New Relic's APIs.
+Both projects share a common transport layer (`src/shared/`, vendored in `src/shared/`) that handles event buffering, metric aggregation, and HTTP delivery to New Relic's APIs.
 
 ---
 
@@ -44,27 +44,26 @@ preflight update
 
 ### Commands
 
-| Command                             | What it does                                                                                      |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `npm run build`                     | Build TypeScript (`tsc --build`) and chmod the CLI binaries                                       |
-| `npm run build:clean`               | Remove build output                                                                               |
-| `npm test`                          | Run the full Jest suite (`maxWorkers: 1`)                                                         |
-| `npm run lint`                      | ESLint over `src/`                                                                                |
-| `npm run format`                    | Prettier write                                                                                    |
-| `npm run format:check`              | Prettier check (no writes)                                                                        |
-| `npm run sync:shared`               | Pull latest source from `../nr-ai-typescript-shared` into `src/shared/` (warns on dirty upstream) |
-| `npm run deploy:dashboard`          | Deploy the default NR dashboard                                                                   |
-| `npm run deploy:dashboard:all`      | Deploy every pre-built dashboard                                                                  |
-| `npm run deploy:dashboard:update`   | Sync every pre-built dashboard in place (preserves GUID/URL)                                      |
-| `npm run deploy:dashboard:teardown` | Delete every pre-built dashboard (matches by name; missing = skipped)                             |
-| `npm run deploy:alerts`             | Deploy the alert policy + conditions to NR                                                        |
-| `npm run deploy:alerts:update`      | Sync conditions on the existing alert policy in place                                             |
-| `npm run deploy:alerts:teardown`    | Delete the alert policy and all its conditions                                                    |
-| `npm run backfill:sessions`         | Backfill local session JSON files from NR event history                                           |
-| `npm run dev`                       | Start local dashboard server (`--local`); assumes `dist/` already built                           |
-| `npm run dev:all`                   | Build then start local dashboard (`npm run build && npm run dev`)                                 |
-| `npm run dev:full`                  | Build backend, then start backend + Vite dev server together (open `http://localhost:5173`)       |
-| `npm run start:local`               | Alias for `npm run dev`                                                                           |
+| Command                             | What it does                                                                                |
+| ----------------------------------- | ------------------------------------------------------------------------------------------- |
+| `npm run build`                     | Build TypeScript (`tsc --build`) and chmod the CLI binaries                                 |
+| `npm run build:clean`               | Remove build output                                                                         |
+| `npm test`                          | Run the full Jest suite (`maxWorkers: 1`)                                                   |
+| `npm run lint`                      | ESLint over `src/`                                                                          |
+| `npm run format`                    | Prettier write                                                                              |
+| `npm run format:check`              | Prettier check (no writes)                                                                  |
+| `npm run deploy:dashboard`          | Deploy the default NR dashboard                                                             |
+| `npm run deploy:dashboard:all`      | Deploy every pre-built dashboard                                                            |
+| `npm run deploy:dashboard:update`   | Sync every pre-built dashboard in place (preserves GUID/URL)                                |
+| `npm run deploy:dashboard:teardown` | Delete every pre-built dashboard (matches by name; missing = skipped)                       |
+| `npm run deploy:alerts`             | Deploy the alert policy + conditions to NR                                                  |
+| `npm run deploy:alerts:update`      | Sync conditions on the existing alert policy in place                                       |
+| `npm run deploy:alerts:teardown`    | Delete the alert policy and all its conditions                                              |
+| `npm run backfill:sessions`         | Backfill local session JSON files from NR event history                                     |
+| `npm run dev`                       | Start local dashboard server (`--local`); assumes `dist/` already built                     |
+| `npm run dev:all`                   | Build then start local dashboard (`npm run build && npm run dev`)                           |
+| `npm run dev:full`                  | Build backend, then start backend + Vite dev server together (open `http://localhost:5173`) |
+| `npm run start:local`               | Alias for `npm run dev`                                                                     |
 
 To run a single test file:
 
@@ -81,7 +80,7 @@ npx tsc -b .
 
 ### Working with shared code
 
-`src/shared/` is a **read-only mirror** — never edit it directly here. Make the change in the upstream `nr-ai-typescript-shared` repo, then run `npm run sync:shared` to pull it in and commit the regenerated tree. Only code consumed by **both** this MCP server and `nr-ai-typescript-agent` belongs in shared.
+Do not edit `src/shared/` directly — it is a vendored snapshot.
 
 ---
 
@@ -92,7 +91,7 @@ This is a flat single-package repo. Source lives directly under `src/`. There is
 ```
 preflight/
   src/
-    shared/        # Transport, events, pricing, harvest scheduler (synced from nr-ai-typescript-shared)
+    shared/        # Transport, events, pricing, harvest scheduler (vendored snapshot)
     hooks/         # Hook collector + pre/post event pairing
     metrics/       # 19 analyzer classes (session, cost, anti-patterns, efficiency, …)
     tools/         # MCP tool handlers
@@ -108,14 +107,14 @@ preflight/
     deploy/        # `deploy-dashboards` and `deploy-alerts` subcommands
   alerts/          # Alert policy + condition JSON definitions (bundled into dist/data/alerts/)
   dashboards/      # Pre-built NR dashboard JSON files (bundled into dist/data/dashboards/)
-  scripts/         # sync-shared.ts, backfill-sessions.ts, check-bundle-size.ts
+  scripts/         # backfill-sessions.ts, check-bundle-size.ts
 ```
 
 For a complete annotated tree, see [CLAUDE.md](./CLAUDE.md).
 
 ### Shared transport layer (`src/shared/`)
 
-The foundation layer is synced from `nr-ai-typescript-shared`. Provides:
+The foundation layer is vendored in `src/shared/`. Provides:
 
 - **Event creation** — `createAiRequest()`, `createAiResponse()`, serialization to NR format
 - **Transport** — HTTP clients for New Relic's Events, Metric, and Logs APIs, plus an OTLP/HTTP exporter
@@ -309,7 +308,7 @@ The MCP server automatically detects and supports multiple AI coding platforms:
 NEW_RELIC_API_KEY=NRAK-... NEW_RELIC_ACCOUNT_ID=12345 preflight deploy-dashboards --all
 ```
 
-Add `--staging` if your account is on the New Relic staging environment (`staging-one.newrelic.com`). Deploys all seven pre-built dashboards. Use `--print` to output JSON for manual import via the NR UI.
+Deploys all seven pre-built dashboards. Use `--print` to output JSON for manual import via the NR UI.
 
 For a self-reflection dashboard pre-filtered to your identity:
 
@@ -338,7 +337,7 @@ NEW_RELIC_API_KEY=NRAK-... NEW_RELIC_ACCOUNT_ID=12345 \
 NEW_RELIC_API_KEY=NRAK-... NEW_RELIC_ACCOUNT_ID=12345 preflight deploy-alerts
 ```
 
-Add `--staging` if your account is on the staging environment. Deploys the "AI Coding Assistant Alerts" policy with five NRQL conditions. Use `--dry-run` to preview without hitting the API.
+Deploys the "AI Coding Assistant Alerts" policy with five NRQL conditions. Use `--dry-run` to preview without hitting the API.
 
 To sync conditions in place on an existing policy (preserves policy ID; matches conditions by name to update, creates new ones, deletes removed ones):
 
@@ -379,8 +378,6 @@ After making changes, run through these checkpoints to confirm end-to-end behavi
 | npm v10+                                                                 | `npm --version` → `10.x.x`   |
 | Claude Code (latest)                                                     | Opens and launches           |
 | **Cloud path only:** New Relic account with a license key + user API key | See README                   |
-
-> **Staging environment (internal):** The cloud path below targets `staging-one.newrelic.com`. Use staging keys and add `--staging` to every deploy command. Production keys return 401 against the staging API — don't mix them.
 
 ### 1. Build and link
 
@@ -467,16 +464,16 @@ Expected: a `re_reading` entry for `README.md` with `read_count: 3`.
 ```bash
 # Dashboards
 NEW_RELIC_API_KEY=NRAK-... NEW_RELIC_ACCOUNT_ID=12345 \
-  preflight deploy-dashboards --all --staging
+  preflight deploy-dashboards --all
 
 # Alerts (optional)
 NEW_RELIC_API_KEY=NRAK-... NEW_RELIC_ACCOUNT_ID=12345 \
-  preflight deploy-alerts --staging
+  preflight deploy-alerts
 ```
 
 > Re-deploying? Use `--update` to sync in place and avoid creating duplicates.
 
-**Checkpoint:** Open staging NR → Dashboards → search `AI Coding`. You should see 7 dashboards listed.
+**Checkpoint:** Open NR → Dashboards → search `AI Coding`. You should see 7 dashboards listed.
 
 ### Teardown / reset
 
@@ -488,9 +485,9 @@ rm -rf ~/.newrelic-preflight
 
 # Cloud: remove dashboards and alerts from NR
 NEW_RELIC_API_KEY=NRAK-... NEW_RELIC_ACCOUNT_ID=12345 \
-  preflight deploy-dashboards --all --teardown --staging
+  preflight deploy-dashboards --all --teardown
 NEW_RELIC_API_KEY=NRAK-... NEW_RELIC_ACCOUNT_ID=12345 \
-  preflight deploy-alerts --teardown --staging
+  preflight deploy-alerts --teardown
 ```
 
 Then restart Claude Code.
@@ -499,15 +496,14 @@ Then restart Claude Code.
 
 ## Troubleshooting
 
-| Symptom                                    | Likely cause                                      | Fix                                                                                 |
-| ------------------------------------------ | ------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `preflight: command not found`             | `npm link` not run                                | Run `npm link` in the repo root                                                     |
-| `nr_observe_health` returns tool-not-found | MCP server not started                            | Restart Claude Code; check MCP output panel                                         |
-| No data in NR after 5 minutes              | Wrong license key or account ID                   | Re-run `preflight setup` with correct credentials                                   |
-| Dashboard at 7777 unreachable              | Port in use or mode is not local                  | Check `lsof -i:7777`; confirm `config.json` has `"mode": "local"`                   |
-| Hook not firing                            | `preflight` not on PATH when Claude Code launched | Run `npm link`, then restart Claude Code                                            |
-| `Invalid account ID` in wizard             | Entered a non-numeric value                       | Account IDs are digits only (e.g. `3456789`)                                        |
-| `HTTP 401` on deploy                       | Using a production key against staging            | Use a key from `staging-one.newrelic.com` and add `--staging` to the deploy command |
+| Symptom                                    | Likely cause                                      | Fix                                                               |
+| ------------------------------------------ | ------------------------------------------------- | ----------------------------------------------------------------- |
+| `preflight: command not found`             | `npm link` not run                                | Run `npm link` in the repo root                                   |
+| `nr_observe_health` returns tool-not-found | MCP server not started                            | Restart Claude Code; check MCP output panel                       |
+| No data in NR after 5 minutes              | Wrong license key or account ID                   | Re-run `preflight setup` with correct credentials                 |
+| Dashboard at 7777 unreachable              | Port in use or mode is not local                  | Check `lsof -i:7777`; confirm `config.json` has `"mode": "local"` |
+| Hook not firing                            | `preflight` not on PATH when Claude Code launched | Run `npm link`, then restart Claude Code                          |
+| `Invalid account ID` in wizard             | Entered a non-numeric value                       | Account IDs are digits only (e.g. `3456789`)                      |
 
 ---
 

@@ -1,6 +1,6 @@
 # NR AI Coding Observability: Preflight
 
-Flat single-package repo providing observability for AI coding assistants (MCP server + metrics engine + HTTP proxy). Source lives directly in `src/`. Shared transport/events/pricing code lives in `src/shared/` (synced from `nr-ai-typescript-shared` via `npm run sync:shared`). All telemetry flows to New Relic. The TypeScript SDK agent lives in the separate `nr-ai-typescript-agent` repo. CI/CD tooling and GitHub App webhook server live in the separate `nr-ai-github-tools` repo.
+Flat single-package repo providing observability for AI coding assistants (MCP server + metrics engine + HTTP proxy). Source lives directly in `src/`. Shared transport/events/pricing code lives in `src/shared/`. All telemetry flows to New Relic.
 
 ## Development Commands
 
@@ -19,8 +19,6 @@ Build directly:
 npx tsc -b .
 ```
 
-To pull in upstream changes from `nr-ai-typescript-shared`: `npm run sync:shared` (then commit the result).
-
 Run tests for a single file:
 
 ```bash
@@ -30,22 +28,20 @@ npx jest -- src/shared/harvest/harvest-scheduler.test.ts
 
 ## Shared Code (`src/shared/`)
 
-**`src/shared/` is a read-only mirror, not a source of truth.** It is overwritten in full by `npm run sync:shared` from the `nr-ai-typescript-shared` repo.
+**`src/shared/` is a vendored snapshot — do not edit directly.**
 
 **Rules:**
 
-1. **Never edit files under `src/shared/` in this repo.** Any change here will be wiped out on the next sync. Make the change in the upstream `nr-ai-typescript-shared` repo, then run `npm run sync:shared` here to pull it in and commit the regenerated tree.
-2. **Only code shared between this MCP server and `nr-ai-typescript-agent` belongs in `nr-ai-typescript-shared`.** If a piece of code is consumed by exactly one of those two repos, it does not belong in shared — keep it local to the consuming repo. Examples of code that _does_ belong: transport clients for NR Events / Metrics / Logs APIs, OTLP transport, event schemas and serialization, harvest scheduler, token extraction, pricing tables, logger, error classification.
-3. **If you need to add a new shared module:** add it in `nr-ai-typescript-shared`, verify both this repo and `nr-ai-typescript-agent` will consume it, then sync into both. Don't introduce a shared file here first and "promote" it later.
+1. **Never edit files under `src/shared/` in this repo.** Do not edit files under `src/shared/` — it is a vendored snapshot.
 
-If you find yourself wanting to edit `src/shared/` directly to fix a bug or add a feature, stop and switch to the upstream repo instead.
+If you find yourself wanting to edit `src/shared/` directly to fix a bug or add a feature, stop — changes must be made in the upstream source and re-vendored here.
 
 ## Project Structure
 
 ```
 preflight/
   src/
-    shared/                         # READ-ONLY mirror — synced from nr-ai-typescript-shared via scripts/sync-shared.ts. Never edit here; edit upstream and re-sync.
+    shared/                         # vendored snapshot — do not edit directly
       config.ts                     # AgentConfig loader (env > file > defaults)
       logger.ts                     # createLogger() — stderr JSON logger
       pricing.ts / pricing-data.ts  # Token pricing tables (Anthropic, Gemini)
@@ -131,7 +127,7 @@ preflight/
     policy.json                     # Policy metadata (name, incident preference)
     conditions/                     # NRQL alert condition JSON files
   dashboards/                       # Pre-built NR dashboard JSON files (data, not source)
-  scripts/                          # sync-shared.ts + deploy scripts (deploy-dashboard.ts, deploy-alerts.ts) + backfill-sessions.ts
+  scripts/                          # deploy scripts (deploy-dashboard.ts, deploy-alerts.ts) + backfill-sessions.ts
 ```
 
 ## Architecture
@@ -169,7 +165,7 @@ Claude Code
 ### Package Dependencies
 
 - Runtime dependencies: `@modelcontextprotocol/sdk`, `zod`, `commander`, `@opentelemetry/*`
-- Shared code in `src/shared/` has no additional dependencies (pure TypeScript, synced from `nr-ai-typescript-shared`)
+- Shared code in `src/shared/` has no additional dependencies (pure TypeScript)
 
 ## TypeScript Conventions
 
@@ -356,7 +352,7 @@ All MCP server events (`AiToolCall`, `AiCodingTask`, `AiAntiPattern`, `AiMcpTool
 
 ### Phase 4 SDK Agent Events
 
-_(Emitted by `nr-ai-agent`, now in the `nr-ai-typescript-agent` repo.)_
+_(Emitted by `nr-ai-agent`, in the companion SDK agent repo.)_
 
 Emitted by `nr-ai-agent` from the intelligence modules (Phases 4.1–4.7):
 
@@ -370,7 +366,7 @@ Emitted by `nr-ai-agent` from the intelligence modules (Phases 4.1–4.7):
 
 ### Provider Support
 
-_(Now in the `nr-ai-typescript-agent` repo.)_
+_(In the companion SDK agent repo.)_
 
 SDK agent wrappers now support 6 AI providers:
 

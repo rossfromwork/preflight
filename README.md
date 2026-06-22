@@ -101,7 +101,7 @@ NEW_RELIC_API_KEY=NRAK-... NEW_RELIC_ACCOUNT_ID=12345 \
 
 This creates 7 dashboards in your NR account. Find them under **Dashboards** → search "AI Coding". The deploy commands ship with the package — both `preflight deploy-dashboards` and `preflight deploy-alerts` are available immediately after `npm install -g`.
 
-> **Staging vs production:** Use your account's license key and account ID from whichever environment you're targeting — both work. Add `--staging` if your account is on `staging-one.newrelic.com`, `--eu` for EU region accounts, or omit both flags for standard production (`one.newrelic.com`). Don't mix keys across environments (a production license key won't ingest to staging and vice versa).
+> **Region:** Use your account's license key and account ID for your environment. Add `--eu` for EU region accounts or `--gov` for FedRAMP accounts. Omit both flags for standard production (`one.newrelic.com`).
 
 **Step 4 — Restart Claude Code and verify**
 
@@ -224,7 +224,7 @@ NEW_RELIC_API_KEY=NRAK-... NEW_RELIC_ACCOUNT_ID=12345 \
   preflight deploy-alerts
 ```
 
-Add `--staging` if your account is on the New Relic staging environment, or `--eu` for accounts on the EU region. This creates five alert conditions: daily cost spike, low efficiency score, stuck loop rate, anti-pattern rate, and session cost budget. To remove them, add `--teardown`.
+Add `--eu` for EU region accounts or `--gov` for FedRAMP accounts. This creates five alert conditions: daily cost spike, low efficiency score, stuck loop rate, anti-pattern rate, and session cost budget. To remove them, add `--teardown`.
 
 To apply changes to alert JSONs without losing the existing policy, add `--update`. This syncs conditions in place (matched by name): updates existing ones, creates new ones, and deletes any that have been removed locally:
 

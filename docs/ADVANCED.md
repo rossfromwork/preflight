@@ -228,7 +228,7 @@ terraform apply
 TF_VAR_account_id=... TF_VAR_api_key=... TF_VAR_staging=true terraform apply
 ```
 
-The `staging = true` flag routes NerdGraph calls to `staging-api.newrelic.com/graphql`. The provider emits a deprecation warning for `nerdgraph_api_url` — this is expected and intentional for NR-internal use.
+The `staging = true` flag routes NerdGraph calls to `staging-api.newrelic.com/graphql`. The provider emits a deprecation warning for `nerdgraph_api_url` — this is expected.
 
 ### Teardown
 
