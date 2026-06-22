@@ -500,4 +500,4 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full development guide, convent
 
 ---
 
-**Questions?** Start with [CONTRIBUTING.md](./CONTRIBUTING.md) or open an issue.
+**Questions?** Start with [CONTRIBUTING.md](./CONTRIBUTING.md) or [open an issue](https://github.com/newrelic-experimental/preflight/issues).

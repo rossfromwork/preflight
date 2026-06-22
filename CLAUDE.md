@@ -57,7 +57,7 @@ preflight/
       event-processor.ts            # Pairs pre/post hook events into ToolCallRecords
       tool-parsers.ts               # INPUT_PARSERS / OUTPUT_PARSERS for tool fields
       bash-classifier.ts            # classifyBash() — coarse Bash command classifier (category/leading/isDestructive/isNetwork)
-    metrics/                        # 19 analyzer classes
+    metrics/                        # metric analyzer classes
       session-tracker.ts            # Per-session tool call tracking
       cost-tracker.ts               # Token cost calculation (per-model)
       cost-forecast.ts              # Burn-rate-based session/day/week cost projections
@@ -410,7 +410,7 @@ Run `npm run lint` before committing to verify the lint target is still met.
 
 - Format: `Type: Short description` (e.g., `Fix #13: Re-queue events on send failure`)
 - Types: `Fix`, `Feat`, `Refactor`, `Chore`, `Test`, `Docs`
-- Include `Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>` when AI-assisted
+- Include `Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>` when AI-assisted
 - One logical change per commit
 
 ## Pull Requests

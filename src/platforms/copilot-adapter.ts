@@ -104,12 +104,12 @@ export class CopilotAdapter implements PlatformAdapter {
   getHookInstallInstructions(): string {
     return [
       'GitHub Copilot Observability Setup:',
-      '1. Install the preflight Copilot VS Code extension (coming soon — see GitHub repo)',
-      '2. Configure the extension to point to the MCP server endpoint:',
+      'Note: GitHub Copilot native integration requires a companion VS Code extension not yet publicly available.',
+      '1. Configure the extension to point to the MCP server endpoint:',
       '   Set "preflight.endpoint" to "http://localhost:9847" in VS Code settings',
-      '3. Set environment variables: NEW_RELIC_LICENSE_KEY, NEW_RELIC_ACCOUNT_ID',
-      '4. The extension detects Copilot-initiated changes and forwards events to the server',
-      '5. Note: tool call timing is approximate (inferred from VS Code event timestamps)',
+      '2. Set environment variables: NEW_RELIC_LICENSE_KEY, NEW_RELIC_ACCOUNT_ID',
+      '3. The extension detects Copilot-initiated changes and forwards events to the server',
+      '4. Note: tool call timing is approximate (inferred from VS Code event timestamps)',
     ].join('\n');
   }
 

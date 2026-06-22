@@ -18,7 +18,7 @@ The MCP server uses a common transport layer (`src/shared/`) for event buffering
 
 ### Prerequisites
 
-- Node.js v24 (see `.nvmrc`)
+- Node.js v22 or later (v24 recommended; use `nvm install` to get the version from `.nvmrc`)
 - A New Relic account with a license key and account ID (for cloud-path testing)
 
 ### First-time setup
@@ -89,7 +89,7 @@ preflight/
   src/
     shared/        # Transport, events, pricing, harvest scheduler (vendored snapshot)
     hooks/         # Hook collector + pre/post event pairing
-    metrics/       # 19 analyzer classes (session, cost, anti-patterns, efficiency, …)
+    metrics/       # metric analyzer classes (session, cost, anti-patterns, efficiency, …)
     tools/         # MCP tool handlers
     proxy/         # HTTP proxy + upstream transports
     storage/       # JSON session and weekly summary persistence
@@ -123,7 +123,7 @@ The foundation layer is vendored in `src/shared/`. Provides:
 
 - **Hooks** (`src/hooks/`) — Claude Code invokes a hook script on every tool use. The collector writes events to a local JSONL buffer. The event processor drains the buffer, pairs pre/post events, and emits `ToolCallRecord` objects.
 
-- **Metrics** (`src/metrics/`) — 19 analyzer classes that each receive tool call records and maintain running state. Session tracking, cost tracking + forecasting, task detection, anti-pattern detection, efficiency scoring, trend analysis, collaboration profiling, and more.
+- **Metrics** (`src/metrics/`) — metric analyzers that each receive tool call records and maintain running state. Session tracking, cost tracking + forecasting, task detection, anti-pattern detection, efficiency scoring, trend analysis, collaboration profiling, and more.
 
 - **Tools** (`src/tools/`) — MCP tool handlers that query the metric trackers and return results. Registered via `registerTools()` in `src/tools/session-stats.ts`.
 
@@ -248,17 +248,29 @@ See [TEST_PATTERNS.md](./docs/TEST_PATTERNS.md) for the full testing guide.
 
 ---
 
-## Git Workflow
+## Contributing Changes
+
+### External contributors — fork workflow
+
+1. Fork the repo on GitHub
+2. Clone your fork: `git clone https://github.com/<your-username>/preflight`
+3. Create a branch: `git checkout -b fix/my-fix`
+4. Make your changes, run `npm test` and `npm run lint`
+5. Push to your fork and open a PR against `main`
 
 ### Commit messages
 
 ```
 Type: Short description
-
-Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
 ```
 
 Types: `Fix`, `Feat`, `Refactor`, `Chore`, `Test`, `Docs`
+
+If you used an AI coding assistant: add a `Co-Authored-By` trailer with the model name, e.g.:
+
+```
+Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>
+```
 
 ### Branches
 
@@ -368,12 +380,12 @@ After making changes, run through these checkpoints to confirm end-to-end behavi
 
 ### Prerequisites
 
-| Item                                                                     | Check                        |
-| ------------------------------------------------------------------------ | ---------------------------- |
-| Node.js v24                                                              | `node --version` → `v24.x.x` |
-| npm v10+                                                                 | `npm --version` → `10.x.x`   |
-| Claude Code (latest)                                                     | Opens and launches           |
-| **Cloud path only:** New Relic account with a license key + user API key | See README                   |
+| Item                                                                     | Check                                 |
+| ------------------------------------------------------------------------ | ------------------------------------- |
+| Node.js v22+                                                             | `node --version` → `v22.x.x` or later |
+| npm v10+                                                                 | `npm --version` → `10.x.x`            |
+| Claude Code (latest)                                                     | Opens and launches                    |
+| **Cloud path only:** New Relic account with a license key + user API key | See README                            |
 
 ### 1. Build and link
 
