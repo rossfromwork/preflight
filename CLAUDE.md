@@ -32,7 +32,7 @@ npx jest -- src/shared/harvest/harvest-scheduler.test.ts
 
 **Rules:**
 
-1. **Never edit files under `src/shared/` in this repo.** Do not edit files under `src/shared/` — it is a vendored snapshot.
+1. **Never edit files under `src/shared/` in this repo.** It is a vendored snapshot; changes must be made upstream and re-vendored here.
 
 If you find yourself wanting to edit `src/shared/` directly to fix a bug or add a feature, stop — changes must be made in the upstream source and re-vendored here.
 
@@ -213,7 +213,7 @@ Logger writes to stderr as JSON. Never write to stdout (reserved for MCP stdio t
 
 ## Metric Tracker Pattern
 
-All 12 metric trackers in `src/metrics/` follow the same shape:
+All metric trackers in `src/metrics/` follow the same shape:
 
 ```typescript
 class XxxTracker {
@@ -313,7 +313,7 @@ Key config interfaces:
 - `McpServerConfig` in `src/config.ts`
 - `AgentConfig` in `src/shared/config.ts`
 
-### New Configuration Fields (Phases 6–10)
+### Additional Configuration Fields
 
 | Field                 | Env Var                             | Type                                  | Purpose                                                                                                                                                                                                |
 | --------------------- | ----------------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -350,7 +350,7 @@ All MCP server events (`AiToolCall`, `AiCodingTask`, `AiAntiPattern`, `AiMcpTool
 - `project_id` — project identifier (auto-derived or configured)
 - `org_id` — organization identifier (from config)
 
-### Phase 4 SDK Agent Events
+### SDK Agent Events
 
 _(Emitted by `nr-ai-agent`, in the companion SDK agent repo.)_
 

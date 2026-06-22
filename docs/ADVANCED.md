@@ -167,17 +167,16 @@ If you have existing NR telemetry but no local session files — for example, be
 ```bash
 NEW_RELIC_API_KEY=NRAK-... NEW_RELIC_ACCOUNT_ID=12345 \
   npx tsx scripts/backfill-sessions.ts \
-  --developer <your-name> [--days 90] [--dry-run] [--staging]
+  --developer <your-name> [--days 90] [--dry-run]
 ```
 
 The script queries NR for your past sessions, reconstructs session summaries, writes them to `~/.newrelic-preflight/sessions/`, and regenerates weekly summaries. Sessions already present locally are skipped. Run `--dry-run` first to preview what would be written.
 
-| Flag          | What it does                                             |
-| ------------- | -------------------------------------------------------- |
-| `--developer` | Required. The developer name to query sessions for.      |
-| `--days`      | How far back to look. Default: 30.                       |
-| `--dry-run`   | Preview output without writing any files.                |
-| `--staging`   | Target the staging NR environment instead of production. |
+| Flag          | What it does                                        |
+| ------------- | --------------------------------------------------- |
+| `--developer` | Required. The developer name to query sessions for. |
+| `--days`      | How far back to look. Default: 30.                  |
+| `--dry-run`   | Preview output without writing any files.           |
 
 ---
 
