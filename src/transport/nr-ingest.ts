@@ -42,6 +42,7 @@ import type { AuditRecord } from '../security/index.js';
 import type { TurnCostAttributor } from '../metrics/turn-cost-attributor.js';
 import type { LocalStore } from '../storage/index.js';
 import { LogIngestManager } from './log-ingest.js';
+import type { AgyQuotaSnapshot, AgyQuotaDelta } from '../metrics/antigravity-quota-poller.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -732,6 +733,49 @@ export class NrIngestManager {
     if (this.orgId) nrEvent.org_id = this.orgId;
     if (this.sessionTraceId != null) nrEvent.session_id = this.sessionTraceId;
     this.scheduler.addEvent(nrEvent);
+  }
+
+  ingestAntigravityQuota(snapshot: AgyQuotaSnapshot, delta: AgyQuotaDelta | null): void {
+    const base: Partial<NrEventData> = {
+      developer: this.developer,
+      appName: this.appName,
+      platform: 'antigravity',
+    };
+    if (this.teamId) base.team_id = this.teamId;
+    if (this.projectId) base.project_id = this.projectId;
+    if (this.orgId) base.org_id = this.orgId;
+    if (this.sessionTraceId != null) base.session_id = this.sessionTraceId;
+
+    // Emit one quota gauge event per model
+    for (const model of snapshot.models) {
+      const nrEvent: NrEventData = {
+        ...base,
+        eventType: 'AiAntigravityQuota',
+        timestamp: snapshot.timestamp,
+        model_id: model.modelId,
+        quota_remaining_pct: Math.round(model.remainingFraction * 1000) / 10,
+        prompt_credits_remaining: snapshot.promptCreditsRemaining,
+        prompt_credits_total: snapshot.promptCreditsTotal,
+        ...(model.resetTime !== undefined && { reset_time: model.resetTime }),
+      } as NrEventData;
+      this.scheduler.addEvent(nrEvent);
+    }
+
+    // Emit an estimated token usage event when we have a delta
+    if (delta && (delta.estimatedInputTokens > 0 || delta.estimatedOutputTokens > 0)) {
+      const tokenEvent: NrEventData = {
+        ...base,
+        eventType: 'AiAntigravityTokenEstimate',
+        timestamp: snapshot.timestamp,
+        credits_consumed: delta.creditsConsumed,
+        estimated_input_tokens: delta.estimatedInputTokens,
+        estimated_output_tokens: delta.estimatedOutputTokens,
+        estimated_cost_usd: Math.round(delta.estimatedCostUsd * 1_000_000) / 1_000_000,
+        elapsed_ms: delta.elapsedMs,
+        ...(delta.primaryModelId !== null && { primary_model_id: delta.primaryModelId }),
+      } as NrEventData;
+      this.scheduler.addEvent(tokenEvent);
+    }
   }
 
   start(): void {

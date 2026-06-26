@@ -80,6 +80,18 @@ export interface McpServerConfig {
     readonly logRetentionMb: number;
     readonly rulesPath: string;
   };
+  /**
+   * When true, polls the running Antigravity CLI language server for quota
+   * snapshots and emits AiAntigravityQuota events to New Relic.
+   * Defaults to auto-detect (true when AntigravityAdapter is active).
+   * Env: NR_AI_ANTIGRAVITY_POLLING
+   */
+  readonly antigravityPollingEnabled: boolean;
+  /**
+   * Interval in ms between Antigravity quota polls. Default: 30000 (30s).
+   * Env: NR_AI_ANTIGRAVITY_POLL_MS
+   */
+  readonly antigravityPollIntervalMs: number;
 }
 
 export const DEFAULT_STORAGE_PATH = resolve(homedir(), '.newrelic-preflight');
@@ -935,6 +947,17 @@ export function loadMcpConfig(cliOptions?: Partial<CliOptions>): Readonly<McpSer
         rulesPath,
       };
     })(),
+
+    antigravityPollingEnabled: envBool(
+      'NR_AI_ANTIGRAVITY_POLLING',
+      typeof file.antigravityPollingEnabled === 'boolean' ? file.antigravityPollingEnabled : true,
+    ),
+
+    antigravityPollIntervalMs: envInt(
+      'NR_AI_ANTIGRAVITY_POLL_MS',
+      typeof file.antigravityPollIntervalMs === 'number' ? file.antigravityPollIntervalMs : 30_000,
+      { min: 5_000, max: 300_000 },
+    ),
   };
 
   logger.debug('Configuration loaded', {

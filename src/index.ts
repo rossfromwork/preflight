@@ -96,6 +96,8 @@ export {
   PlatformRegistry,
   createDefaultRegistry,
 } from './platforms/index.js';
+import { AntigravityQuotaPoller } from './metrics/antigravity-quota-poller.js';
+import { createDefaultRegistry } from './platforms/index.js';
 export type {
   NormalizedToolCall,
   PlatformConfig,
@@ -517,6 +519,7 @@ async function main(): Promise<void> {
   // Aborts the async resolveSessionId polling loop when shutdown fires so
   // the breadcrumb poll does not outlive the process.
   let sessionResolutionAbort: AbortController | undefined;
+  let quotaPoller: AntigravityQuotaPoller | undefined;
 
   let shuttingDown = false;
   const shutdown = async () => {
@@ -550,6 +553,7 @@ async function main(): Promise<void> {
         alertRulesWatcher = undefined;
       }
       eventProcessor?.stop();
+      quotaPoller?.stop();
       liveSessionRegistry?.stopSampling();
       // Use allSettled so a failure in one stop() doesn't prevent the others.
       const stopResults = await Promise.allSettled([
@@ -1124,6 +1128,26 @@ async function main(): Promise<void> {
         sessionTraceId,
       });
       capturedNrIngest = nrIngest;
+    }
+
+    // Start Antigravity quota poller when the platform is antigravity or explicitly enabled.
+    // Runs in both 'cloud' and 'both' modes so quota events reach New Relic.
+    if (
+      config.antigravityPollingEnabled &&
+      config.mode !== 'local' &&
+      capturedNrIngest !== undefined
+    ) {
+      const registry = createDefaultRegistry();
+      const detected = registry.detect();
+      if (detected?.platformName === 'antigravity') {
+        const capturedIngest = capturedNrIngest;
+        quotaPoller = new AntigravityQuotaPoller({
+          pollIntervalMs: config.antigravityPollIntervalMs,
+        });
+        quotaPoller.start((snapshot, delta) => {
+          capturedIngest.ingestAntigravityQuota(snapshot, delta);
+        });
+      }
     }
 
     const capturedAlertEngine = alertEngine;
