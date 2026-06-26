@@ -278,6 +278,78 @@ function handleSchedule(options: { time?: string; disable?: boolean }): void {
 }
 
 // ---------------------------------------------------------------------------
+// Antigravity install handler
+// ---------------------------------------------------------------------------
+
+const AGY_GEMINI_DIR = resolve(homedir(), '.gemini');
+const AGY_HOOKS_PATH = resolve(AGY_GEMINI_DIR, 'config', 'hooks.json');
+const AGY_SETTINGS_PATH = resolve(AGY_GEMINI_DIR, 'antigravity-cli', 'settings.json');
+
+function resolveCollectorBinaryPath(): string | null {
+  try {
+    const raw = execSync('which preflight-collector', { stdio: 'pipe' }).toString().trim();
+    return raw.length > 0 ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+function handleAntigravityInstall(options: { licenseKey?: string; accountId?: string }): void {
+  migrateStoragePath(true);
+
+  const collectorPath = resolveCollectorBinaryPath();
+  const preCmd = collectorPath ? `"${collectorPath}" pre-tool` : 'preflight-collector pre-tool';
+  const postCmd = collectorPath ? `"${collectorPath}" post-tool` : 'preflight-collector post-tool';
+
+  // 1. Write ~/.gemini/config/hooks.json (named-hook format required by agy)
+  const existingHooks = readJsonFile(AGY_HOOKS_PATH);
+  const mergedHooks = {
+    ...existingHooks,
+    preflight: {
+      PreToolUse: [{ matcher: '', hooks: [{ type: 'command', command: preCmd }] }],
+      PostToolUse: [{ matcher: '', hooks: [{ type: 'command', command: postCmd }] }],
+    },
+  };
+  writeJsonFile(AGY_HOOKS_PATH, mergedHooks);
+  print(`\n✓ Antigravity hooks written: ${AGY_HOOKS_PATH}`);
+  print('  - Added PreToolUse and PostToolUse hooks');
+
+  // 2. Merge MCP server into ~/.gemini/antigravity-cli/settings.json
+  const binPath = resolveBinaryPath();
+  const mcpCommand = binPath ?? 'preflight';
+  const existingSettings = readJsonFile(AGY_SETTINGS_PATH);
+  const existingMcpServers =
+    typeof existingSettings.mcpServers === 'object' && existingSettings.mcpServers !== null
+      ? (existingSettings.mcpServers as Record<string, unknown>)
+      : {};
+  const mergedSettings = {
+    ...existingSettings,
+    mcpServers: {
+      ...existingMcpServers,
+      preflight: { command: mcpCommand, args: ['--stdio'] },
+    },
+  };
+  writeJsonFile(AGY_SETTINGS_PATH, mergedSettings);
+  print(`✓ MCP server registered: ${AGY_SETTINGS_PATH}`);
+  print('  - Added preflight MCP server under mcpServers');
+
+  // 3. Optionally write NR config
+  if (options.licenseKey && options.accountId) {
+    const config = generateNrConfig(options.licenseKey, options.accountId);
+    writeJsonFile(NR_CONFIG_PATH, config as unknown as Record<string, unknown>);
+    print(`\n✓ New Relic config written: ${NR_CONFIG_PATH}`);
+  } else if (options.licenseKey || options.accountId) {
+    print('\n⚠ Both --license-key and --account-id are required to save NR config. Skipped.');
+  }
+
+  print('\nNext steps:');
+  print('  1. Restart agy');
+  print('  2. Run /hooks inside agy to verify the preflight hooks are registered');
+  print('  3. Run /mcp  inside agy to verify the preflight MCP server is connected');
+  print('');
+}
+
+// ---------------------------------------------------------------------------
 // Install handler
 // ---------------------------------------------------------------------------
 
@@ -287,7 +359,13 @@ function handleInstall(options: {
   project?: boolean;
   windowsCc?: boolean;
   linuxCc?: boolean;
+  platform?: string;
 }): void {
+  if (options.platform === 'antigravity') {
+    handleAntigravityInstall({ licenseKey: options.licenseKey, accountId: options.accountId });
+    return;
+  }
+
   migrateStoragePath(true);
   const scope = options.project ? 'project' : 'user';
   const binPath = resolveBinaryPath();
@@ -665,12 +743,17 @@ export function createInstallProgram(): Command {
 
   program
     .command('install')
-    .description('Configure Claude Code hooks and MCP server for AI observability')
+    .description('Configure hooks and MCP server for AI observability')
     .option('--license-key <key>', 'New Relic license key')
     .option('--account-id <id>', 'New Relic account ID')
     .option('--project', 'Write to project-level .claude/settings.json instead of user-level')
     .option('--windows-cc', 'Target Windows Claude Code (desktop app) when running inside WSL')
     .option('--linux-cc', 'Target Linux Claude Code (npm in WSL) when running inside WSL')
+    .option(
+      '--platform <name>',
+      'Target AI tool: claude-code (default) or antigravity',
+      'claude-code',
+    )
     .action(handleInstall);
 
   program
