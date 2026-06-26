@@ -13,7 +13,12 @@ const logger = createLogger('antigravity-quota-poller');
 // ---------------------------------------------------------------------------
 
 export interface AgyModelQuota {
+  /** Raw internal ID from agy (e.g. MODEL_PLACEHOLDER_M132) */
   readonly modelId: string;
+  /** Human-readable label from agy (e.g. "Gemini 3.5 Flash (High)") */
+  readonly label?: string;
+  /** Pricing-table-compatible key resolved from label (e.g. "gemini-3.1-pro") */
+  readonly resolvedModelId?: string;
   readonly remainingFraction: number;
   readonly resetTime?: string;
 }
@@ -65,6 +70,54 @@ const PROBE_TIMEOUT_MS = 500;
 const REQUEST_TIMEOUT_MS = 3_000;
 
 // ---------------------------------------------------------------------------
+// Model label → pricing table key mapping
+// ---------------------------------------------------------------------------
+
+// agy returns human-readable labels alongside opaque MODEL_PLACEHOLDER_* IDs.
+// This map translates stripped labels to keys that resolveModelPricing() understands.
+// Keys follow Preflight's pricing-data.ts naming (src/shared is vendored — not editable).
+// Note: "Gemini 3.5 Flash" is not a publicly documented model name at the knowledge
+// cutoff; the mapping to gemini-3.1-pro is a best-effort approximation.
+const AGY_LABEL_MODEL_MAP: Record<string, string> = {
+  'Gemini 3.5 Flash': 'gemini-3.1-pro', // approximate — closest documented equivalent
+  'Gemini 3.1 Pro': 'gemini-3.1-pro', // → alias to gemini-3.1-pro-preview
+  'Gemini 3.1 Flash Lite': 'gemini-3.1-flash-lite',
+  'Gemini 3 Flash': 'gemini-3-flash', // → alias to gemini-3-flash-preview
+  'Gemini 2.5 Pro': 'gemini-2.5-pro',
+  'Gemini 2.5 Flash': 'gemini-2.5-flash',
+  'Gemini 2.5 Flash Lite': 'gemini-2.5-flash-lite',
+  'Gemini 2.0 Flash': 'gemini-2.0-flash',
+  'Gemini 1.5 Pro': 'gemini-1.5-pro',
+  'Gemini 1.5 Flash': 'gemini-1.5-flash',
+};
+
+// Quality/speed tier suffixes agy appends to label strings
+const LABEL_TIER_SUFFIXES = [
+  ' (High)',
+  ' (Medium)',
+  ' (Low)',
+  ' (Thinking)',
+  ' (Fast)',
+  ' (Balanced)',
+];
+
+function resolveModelIdFromLabel(label: string): string | null {
+  // Strip tier suffix first
+  let base = label;
+  for (const suffix of LABEL_TIER_SUFFIXES) {
+    if (base.endsWith(suffix)) {
+      base = base.slice(0, -suffix.length);
+      break;
+    }
+  }
+  const direct = AGY_LABEL_MODEL_MAP[base];
+  if (direct) return direct;
+  // Secondary: try Preflight's prefix matching via kebab-case conversion
+  const kebab = base.toLowerCase().replace(/\s+/g, '-');
+  return resolveModelPricing(kebab) ? kebab : null;
+}
+
+// ---------------------------------------------------------------------------
 // Process detection
 // ---------------------------------------------------------------------------
 
@@ -73,24 +126,29 @@ async function detectAgyProcess(): Promise<AgyProcessInfo | null> {
     const { stdout } = await execAsync('ps aux');
     for (const line of stdout.split('\n')) {
       const lower = line.toLowerCase();
-      if (!lower.includes('antigravity')) continue;
-      if (
-        !line.includes('--csrf_token') &&
-        !line.includes('language-server') &&
-        !line.includes('lsp') &&
-        !line.includes('exa.language_server_pb')
-      )
-        continue;
+
+      // Match: explicit language-server mode (IDE extension, has --csrf_token)
+      // OR: bare `agy` CLI (interactive terminal session — no extra flags)
+      const isLanguageServer =
+        lower.includes('antigravity') &&
+        (line.includes('--csrf_token') ||
+          line.includes('language-server') ||
+          line.includes('lsp') ||
+          line.includes('exa.language_server_pb'));
 
       const parts = line.trim().split(/\s+/);
-      if (parts.length < 11) continue;
+      const command = parts[10] ?? '';
+      const isBareAgy = /\bagy\b/.test(command) && parts.length >= 11;
+
+      if (!isLanguageServer && !isBareAgy) continue;
+
       const pid = parseInt(parts[1], 10);
       if (isNaN(pid)) continue;
 
       const commandLine = parts.slice(10).join(' ');
       const csrfToken = extractArg(commandLine, '--csrf_token') ?? undefined;
 
-      logger.debug('Detected agy process', { pid, hasCsrf: !!csrfToken });
+      logger.debug('Detected agy process', { pid, hasCsrf: !!csrfToken, isBareAgy });
       return { pid, csrfToken, commandLine };
     }
   } catch (err) {
@@ -287,8 +345,10 @@ function parseUserStatusResponse(response: unknown): AgyQuotaSnapshot | null {
       const remainingFraction =
         typeof quotaInfo?.remainingFraction === 'number' ? quotaInfo.remainingFraction : 1;
       const resetTime = typeof quotaInfo?.resetTime === 'string' ? quotaInfo.resetTime : undefined;
+      const label = typeof c.label === 'string' ? c.label : undefined;
+      const resolvedModelId = label ? (resolveModelIdFromLabel(label) ?? undefined) : undefined;
 
-      models.push({ modelId, remainingFraction, resetTime });
+      models.push({ modelId, label, resolvedModelId, remainingFraction, resetTime });
     }
   }
 
@@ -308,7 +368,8 @@ function computeDelta(baseline: AgyQuotaSnapshot, current: AgyQuotaSnapshot): Ag
     baseline.promptCreditsRemaining - current.promptCreditsRemaining,
   );
 
-  // Infer the primary model from the largest fraction drop
+  // Infer the primary model from the largest fraction drop.
+  // Prefer resolvedModelId (pricing key) over raw placeholder for cost lookups.
   let primaryModelId: string | null = null;
   let maxDrop = 0;
   for (const curr of current.models) {
@@ -317,7 +378,7 @@ function computeDelta(baseline: AgyQuotaSnapshot, current: AgyQuotaSnapshot): Ag
     const drop = prev.remainingFraction - curr.remainingFraction;
     if (drop > maxDrop) {
       maxDrop = drop;
-      primaryModelId = curr.modelId;
+      primaryModelId = curr.resolvedModelId ?? curr.label ?? curr.modelId;
     }
   }
 

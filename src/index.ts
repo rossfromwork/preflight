@@ -1131,21 +1131,33 @@ async function main(): Promise<void> {
     }
 
     // Start Antigravity quota poller when the platform is antigravity or explicitly enabled.
-    // Runs in both 'cloud' and 'both' modes so quota events reach New Relic.
-    if (
-      config.antigravityPollingEnabled &&
-      config.mode !== 'local' &&
-      capturedNrIngest !== undefined
-    ) {
+    // Runs in all modes: local (feeds dashboard only) and cloud/both (feeds NR + dashboard).
+    if (config.antigravityPollingEnabled) {
       const registry = createDefaultRegistry();
       const detected = registry.detect();
       if (detected?.platformName === 'antigravity') {
         const capturedIngest = capturedNrIngest;
+        const capturedCostTracker = costTracker;
         quotaPoller = new AntigravityQuotaPoller({
           pollIntervalMs: config.antigravityPollIntervalMs,
         });
         quotaPoller.start((snapshot, delta) => {
-          capturedIngest.ingestAntigravityQuota(snapshot, delta);
+          // Ship to New Relic when in cloud or both mode
+          capturedIngest?.ingestAntigravityQuota(snapshot, delta);
+          // Always feed local cost tracker so dashboard widgets update
+          if (delta && delta.primaryModelId && delta.estimatedInputTokens > 0) {
+            capturedCostTracker?.recordTokenUsage(
+              {
+                inputTokens: delta.estimatedInputTokens,
+                outputTokens: delta.estimatedOutputTokens,
+                thinkingTokens: 0,
+                cacheReadTokens: 0,
+                cacheCreationTokens: 0,
+                totalTokens: delta.estimatedInputTokens + delta.estimatedOutputTokens,
+              },
+              delta.primaryModelId,
+            );
+          }
         });
       }
     }

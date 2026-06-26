@@ -753,6 +753,8 @@ export class NrIngestManager {
         eventType: 'AiAntigravityQuota',
         timestamp: snapshot.timestamp,
         model_id: model.modelId,
+        model_label: model.label ?? '',
+        resolved_model_id: model.resolvedModelId ?? model.modelId,
         quota_remaining_pct: Math.round(model.remainingFraction * 1000) / 10,
         prompt_credits_remaining: snapshot.promptCreditsRemaining,
         prompt_credits_total: snapshot.promptCreditsTotal,
@@ -772,9 +774,25 @@ export class NrIngestManager {
         estimated_output_tokens: delta.estimatedOutputTokens,
         estimated_cost_usd: Math.round(delta.estimatedCostUsd * 1_000_000) / 1_000_000,
         elapsed_ms: delta.elapsedMs,
+        pricing_note: delta.estimatedCostUsd > 0 ? 'resolved' : 'approximate',
         ...(delta.primaryModelId !== null && { primary_model_id: delta.primaryModelId }),
       } as NrEventData;
       this.scheduler.addEvent(tokenEvent);
+
+      // Feed local cost tracker so dashboard widgets update (model usage, cost)
+      if (this.costTracker) {
+        this.costTracker.recordTokenUsage(
+          {
+            inputTokens: delta.estimatedInputTokens,
+            outputTokens: delta.estimatedOutputTokens,
+            thinkingTokens: 0,
+            cacheReadTokens: 0,
+            cacheCreationTokens: 0,
+            totalTokens: delta.estimatedInputTokens + delta.estimatedOutputTokens,
+          },
+          delta.primaryModelId ?? 'gemini-unknown',
+        );
+      }
     }
   }
 
