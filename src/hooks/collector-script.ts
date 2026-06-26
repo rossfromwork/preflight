@@ -409,6 +409,7 @@ interface HookInput {
 // ---------------------------------------------------------------------------
 
 const AGY_TOOL_MAP: Record<string, string> = {
+  // File and directory operations
   run_command: 'Bash',
   view_file: 'Read',
   write_to_file: 'Write',
@@ -417,11 +418,22 @@ const AGY_TOOL_MAP: Record<string, string> = {
   grep_search: 'Grep',
   find_by_name: 'Glob',
   list_dir: 'Read',
+  // Search and research
   search_web: 'WebSearch',
   read_url_content: 'WebFetch',
+  // Agent collaboration
   invoke_subagent: 'Agent',
   define_subagent: 'Agent',
+  manage_subagents: 'Agent',
+  send_message: 'AgentMessage',
+  // Interaction and media
   ask_question: 'AskUserQuestion',
+  generate_image: 'GenerateImage',
+  // System and execution (agy-specific, no Claude Code equivalent)
+  manage_task: 'TaskManage',
+  schedule: 'Schedule',
+  list_permissions: 'ListPermissions',
+  ask_permission: 'AskPermission',
 };
 
 function isAntigravityPayload(data: Record<string, unknown>): boolean {
