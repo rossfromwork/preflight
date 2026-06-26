@@ -247,6 +247,7 @@ export class HookEventProcessor {
         preEvent.toolInput,
         event.toolOutput,
       );
+      const platform = (preEvent.platform ?? event.platform) as string | undefined;
       const record: ToolCallRecord = {
         id: randomUUID(),
         sessionId: (preEvent.sessionId as string) ?? (event.sessionId as string) ?? null,
@@ -263,6 +264,7 @@ export class HookEventProcessor {
         ...(preEvent.permissionMode !== undefined && {
           permissionMode: preEvent.permissionMode as string,
         }),
+        ...(platform !== undefined && { platform }),
         ...toolFields,
       };
       this.emitRecord(record);
@@ -270,6 +272,7 @@ export class HookEventProcessor {
       // Orphaned post — no matching pre; use post-event's toolInput if present
       logger.debug('Orphaned post event — no matching pre', { tool: event.tool, key });
       const toolFields = parseToolSpecificFields(event.tool, event.toolInput, event.toolOutput);
+      const orphanPlatform = event.platform as string | undefined;
       const record: ToolCallRecord = {
         id: randomUUID(),
         sessionId: (event.sessionId as string) ?? null,
@@ -280,6 +283,7 @@ export class HookEventProcessor {
         success: event.success ?? true,
         ...(event.error !== undefined && { error: event.error as string }),
         ...(event.outputSize !== undefined && { outputSizeBytes: event.outputSize }),
+        ...(orphanPlatform !== undefined && { platform: orphanPlatform }),
         ...toolFields,
       };
       this.emitRecord(record);

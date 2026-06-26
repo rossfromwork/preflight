@@ -159,6 +159,7 @@ interface LiveSessionMetrics {
   readonly toolCallCountByTool: Record<string, number>;
   readonly uniqueFilesRead: number;
   readonly uniqueFilesWritten: number;
+  readonly platform?: string;
   readonly toolCallTimeline: ReadonlyArray<{
     readonly timestamp: number;
     readonly toolName: string;
@@ -655,6 +656,7 @@ export function createApiHandler(
           durationMs: live.sessionDurationMs,
           toolCallCount: live.toolCallCount,
           estimatedCostUsd: deps.costTracker?.getMetrics().sessionTotalCostUsd ?? null,
+          ...(live.platform !== undefined && { platform: live.platform }),
         });
       }
     }

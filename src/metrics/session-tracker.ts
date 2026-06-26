@@ -50,6 +50,8 @@ export interface SessionMetrics {
   bashCallsByCategory: Record<string, number>;
   searchQueries: number;
   toolCallTimeline: TimelineEntry[];
+  /** Platform that generated these tool calls (e.g. 'antigravity', 'claude-code'). */
+  platform?: string;
   /** True when the timeline was capped at MAX_TIMELINE_ENTRIES; callers should not assume they have the full history. */
   timelineTruncated: boolean;
   /** Lifetime total of timeline entries, including those dropped by the cap. */
@@ -114,6 +116,7 @@ export class SessionTracker {
   private readonly bashCallsByCategory = new Map<string, number>();
   private timeline: TimelineEntry[] = [];
   private timelineEntryCount = 0;
+  private platform: string | undefined;
 
   constructor(sessionId: string) {
     if (typeof sessionId !== 'string' || sessionId.length === 0) {
@@ -127,6 +130,9 @@ export class SessionTracker {
 
   recordToolCall(record: ToolCallRecord): void {
     this.toolCallCount++;
+    if (this.platform === undefined && typeof record.platform === 'string') {
+      this.platform = record.platform;
+    }
 
     // Derive session name from cwd; prefer a later, more meaningful name if the
     // current one is a degenerate system directory (tmp, var, usr, etc.).
@@ -267,6 +273,7 @@ export class SessionTracker {
       toolCallTimeline: [...this.timeline],
       timelineTruncated: this.timelineEntryCount > this.timeline.length,
       timelineEntryCount: this.timelineEntryCount,
+      ...(this.platform !== undefined && { platform: this.platform }),
     };
   }
 

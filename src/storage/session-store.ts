@@ -374,6 +374,7 @@ export function buildSessionSummary(sources: BuildSessionSummarySources): FullSe
     userCorrections: 0,
     outcome: 'completed',
     timeline: timeline.length > 0 ? timeline : undefined,
+    ...(sessionMetrics.platform !== undefined && { platform: sessionMetrics.platform }),
   };
 }
 
