@@ -269,7 +269,15 @@ export class HookEventProcessor {
       };
       this.emitRecord(record);
     } else {
-      // Orphaned post — no matching pre; use post-event's toolInput if present
+      // Orphaned post — no matching pre; use post-event's toolInput if present.
+      // Drop events where both tool name and input are unknown — these are
+      // synthetic model-response steps emitted by Antigravity CLI between tool
+      // calls (agy fires PostToolUse for every model turn, not just tool calls).
+      // They carry no actionable information and produce noise in dashboards.
+      if (event.tool === 'unknown' && event.toolInput === undefined) {
+        logger.debug('Dropping synthetic orphaned post (no tool name or input)', { key });
+        return;
+      }
       logger.debug('Orphaned post event — no matching pre', { tool: event.tool, key });
       const toolFields = parseToolSpecificFields(event.tool, event.toolInput, event.toolOutput);
       const orphanPlatform = event.platform as string | undefined;
