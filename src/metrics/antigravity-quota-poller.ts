@@ -79,6 +79,7 @@ const REQUEST_TIMEOUT_MS = 3_000;
 // Note: "Gemini 3.5 Flash" is not a publicly documented model name at the knowledge
 // cutoff; the mapping to gemini-3.1-pro is a best-effort approximation.
 const AGY_LABEL_MODEL_MAP: Record<string, string> = {
+  // Gemini models
   'Gemini 3.5 Flash': 'gemini-3.1-pro', // approximate — closest documented equivalent
   'Gemini 3.1 Pro': 'gemini-3.1-pro', // → alias to gemini-3.1-pro-preview
   'Gemini 3.1 Flash Lite': 'gemini-3.1-flash-lite',
@@ -89,6 +90,14 @@ const AGY_LABEL_MODEL_MAP: Record<string, string> = {
   'Gemini 2.0 Flash': 'gemini-2.0-flash',
   'Gemini 1.5 Pro': 'gemini-1.5-pro',
   'Gemini 1.5 Flash': 'gemini-1.5-flash',
+  // Claude models available via agy (resolve via prefix matching in shared pricing)
+  'Claude Sonnet 4.6': 'claude-sonnet-4-6',
+  'Claude Opus 4.6': 'claude-opus-4-6',
+  'Claude Sonnet 4.5': 'claude-sonnet-4-5',
+  'Claude Haiku 4.5': 'claude-haiku-4-5',
+  // GPT-OSS models — not in Preflight pricing table, use label as identifier
+  // so the model name still surfaces correctly in the dashboard
+  'GPT-OSS 120B': 'gpt-oss-120b',
 };
 
 // Quality/speed tier suffixes agy appends to label strings

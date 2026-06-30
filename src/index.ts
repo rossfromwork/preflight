@@ -1161,18 +1161,26 @@ async function main(): Promise<void> {
           // the session name and model usage widget instead of claude-sonnet.
           if (primaryModel) sessionTracker?.setPlatformModel(primaryModel);
 
-          // Always feed local cost tracker so dashboard widgets update
+          // Always feed local cost tracker AND model usage tracker so all
+          // dashboard widgets update with the Antigravity model data.
           if (delta && delta.primaryModelId && delta.estimatedInputTokens > 0) {
-            capturedCostTracker?.recordTokenUsage(
-              {
-                inputTokens: delta.estimatedInputTokens,
-                outputTokens: delta.estimatedOutputTokens,
-                thinkingTokens: 0,
-                cacheReadTokens: 0,
-                cacheCreationTokens: 0,
-                totalTokens: delta.estimatedInputTokens + delta.estimatedOutputTokens,
-              },
+            const usage = {
+              inputTokens: delta.estimatedInputTokens,
+              outputTokens: delta.estimatedOutputTokens,
+              thinkingTokens: 0,
+              cacheReadTokens: 0,
+              cacheCreationTokens: 0,
+              totalTokens: delta.estimatedInputTokens + delta.estimatedOutputTokens,
+            };
+            const breakdown = capturedCostTracker?.recordTokenUsage(usage, delta.primaryModelId);
+            // Feed model usage tracker so Today page model widget shows the
+            // Antigravity model (gemini-3.1-pro, gpt-oss-120b, etc.) instead
+            // of only claude-sonnet-4-6 from Claude Code transcript events.
+            modelUsageTracker.recordUsage(
               delta.primaryModelId,
+              delta.estimatedInputTokens,
+              delta.estimatedOutputTokens,
+              breakdown?.totalUsd ?? delta.estimatedCostUsd,
             );
           }
         });
