@@ -790,7 +790,8 @@ export function registerTools(server: Server, options: ToolRegistrationOptions):
             };
           }
           const taskId = (args as Record<string, unknown> | undefined)?.task_id as
-            string | undefined;
+            | string
+            | undefined;
           return handleGetWorkflowTrace(
             taskDetector,
             antiPatternDetector,

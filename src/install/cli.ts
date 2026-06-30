@@ -32,7 +32,7 @@ import {
   getDashboardDaemonStatus,
   resolveBinaryPath,
 } from './schedule.js';
-import { readJsonFileStrict, writeJsonFile } from './json-utils.js';
+import { readJsonFile, readJsonFileStrict, writeJsonFile } from './json-utils.js';
 
 const NR_CONFIG_PATH = resolve(DEFAULT_STORAGE_PATH, 'config.json');
 

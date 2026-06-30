@@ -64,9 +64,11 @@ export class DashboardServer {
   private readonly startedAt = Date.now();
   private readonly routes = new Map<string, RouteHandler>();
   private readonly staticHandler:
-    ((req: IncomingMessage, res: ServerResponse) => Promise<void>) | undefined;
+    | ((req: IncomingMessage, res: ServerResponse) => Promise<void>)
+    | undefined;
   private readonly apiHandler:
-    ((req: IncomingMessage, res: ServerResponse) => Promise<void>) | undefined;
+    | ((req: IncomingMessage, res: ServerResponse) => Promise<void>)
+    | undefined;
   // SSE responses are long-lived and would block server.close() forever.
   // Track them so stop() can force-end each one before awaiting close.
   private readonly activeSseResponses = new Set<ServerResponse>();

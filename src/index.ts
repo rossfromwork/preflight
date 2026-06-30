@@ -127,7 +127,8 @@ export function maskCredential(key: string): string {
  *   re-throw `error` unchanged.
  */
 export type DashboardStartFailure =
-  { kind: 'skip'; message: string } | { kind: 'rethrow'; error: unknown };
+  | { kind: 'skip'; message: string }
+  | { kind: 'rethrow'; error: unknown };
 
 /**
  * Decide how to handle a failure returned from `DashboardServer.start()`.
