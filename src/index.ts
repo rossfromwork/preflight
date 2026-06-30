@@ -1144,6 +1144,19 @@ async function main(): Promise<void> {
         quotaPoller.start((snapshot, delta) => {
           // Ship to New Relic when in cloud or both mode
           capturedIngest?.ingestAntigravityQuota(snapshot, delta);
+
+          // Resolve primary model: prefer delta (credit-change driven) then
+          // fall back to the model with the lowest remaining fraction in the snapshot.
+          const primaryModel =
+            delta?.primaryModelId ??
+            snapshot.models
+              .filter((m) => m.resolvedModelId !== undefined)
+              .sort((a, b) => a.remainingFraction - b.remainingFraction)[0]?.resolvedModelId;
+
+          // Set the Gemini model in the session tracker so it appears in
+          // the session name and model usage widget instead of claude-sonnet.
+          if (primaryModel) sessionTracker?.setPlatformModel(primaryModel);
+
           // Always feed local cost tracker so dashboard widgets update
           if (delta && delta.primaryModelId && delta.estimatedInputTokens > 0) {
             capturedCostTracker?.recordTokenUsage(
@@ -1215,7 +1228,11 @@ async function main(): Promise<void> {
         sessionTracker.recordToolCall(record);
         taskDetector.recordToolCall(record);
         if (record.sessionId) {
-          liveSessionRegistry!.touch(record.sessionId, record.cwd as string | undefined);
+          liveSessionRegistry!.touch(
+            record.sessionId,
+            record.cwd as string | undefined,
+            record.session_name as string | undefined,
+          );
         }
 
         if (config.transport !== 'nr-events-api' && taskSpanTracker && sessionSpan) {

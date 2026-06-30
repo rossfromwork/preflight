@@ -52,6 +52,8 @@ export interface SessionMetrics {
   toolCallTimeline: TimelineEntry[];
   /** Platform that generated these tool calls (e.g. 'antigravity', 'claude-code'). */
   platform?: string;
+  /** Primary model resolved from the platform's quota/token data (e.g. 'gemini-3.1-pro'). */
+  platformModel?: string;
   /** True when the timeline was capped at MAX_TIMELINE_ENTRIES; callers should not assume they have the full history. */
   timelineTruncated: boolean;
   /** Lifetime total of timeline entries, including those dropped by the cap. */
@@ -117,6 +119,7 @@ export class SessionTracker {
   private timeline: TimelineEntry[] = [];
   private timelineEntryCount = 0;
   private platform: string | undefined;
+  private platformModel: string | undefined;
 
   constructor(sessionId: string) {
     if (typeof sessionId !== 'string' || sessionId.length === 0) {
@@ -274,7 +277,12 @@ export class SessionTracker {
       timelineTruncated: this.timelineEntryCount > this.timeline.length,
       timelineEntryCount: this.timelineEntryCount,
       ...(this.platform !== undefined && { platform: this.platform }),
+      ...(this.platformModel !== undefined && { platformModel: this.platformModel }),
     };
+  }
+
+  setPlatformModel(model: string): void {
+    this.platformModel = model;
   }
 
   emitMetrics(aggregator: MetricAggregator): void {

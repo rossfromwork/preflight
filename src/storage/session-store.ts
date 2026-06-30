@@ -347,7 +347,7 @@ export function buildSessionSummary(sources: BuildSessionSummarySources): FullSe
     durationMs: now - sessionMetrics.sessionStartTime,
     toolCallCount: sessionMetrics.toolCallCount,
     developer,
-    model: costMetrics?.model ?? null,
+    model: sessionMetrics.platformModel ?? costMetrics?.model ?? null,
     toolBreakdown: { ...sessionMetrics.toolCallCountByTool },
     filesRead: [...allFilesRead].sort(),
     filesModified: [...allFilesModified].sort(),

@@ -5,7 +5,7 @@
 
 import { basename } from 'node:path';
 
-const DEFAULT_STALE_THRESHOLD_MS = 180_000; // 3 minutes
+const DEFAULT_STALE_THRESHOLD_MS = 1_800_000; // 30 minutes
 const MAX_CONCURRENCY_SAMPLES = 2880; // 24h at 30s intervals
 const SAMPLE_INTERVAL_MS = 30_000;
 
@@ -26,13 +26,15 @@ export class LiveSessionRegistry {
     this.staleThresholdMs = staleThresholdMs;
   }
 
-  touch(sessionId: string, cwd?: string): void {
+  touch(sessionId: string, cwd?: string, fallbackName?: string): void {
     this.lastActivity.set(sessionId, Date.now());
-    if (cwd && !this.sessionNames.has(sessionId)) {
-      const name = basename(cwd);
-      if (name.length > 0 && name !== '.' && name !== '..') {
-        this.sessionNames.set(sessionId, name);
-      }
+    if (!this.sessionNames.has(sessionId)) {
+      const cwdName = cwd ? basename(cwd) : undefined;
+      const resolved =
+        cwdName && cwdName.length > 0 && cwdName !== '.' && cwdName !== '..'
+          ? cwdName
+          : fallbackName;
+      if (resolved) this.sessionNames.set(sessionId, resolved);
     }
     const liveCount = this.getLiveSessions().length;
     if (liveCount > this.peakConcurrent) {

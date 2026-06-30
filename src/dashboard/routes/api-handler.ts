@@ -657,6 +657,10 @@ export function createApiHandler(
           toolCallCount: live.toolCallCount,
           estimatedCostUsd: deps.costTracker?.getMetrics().sessionTotalCostUsd ?? null,
           ...(live.platform !== undefined && { platform: live.platform }),
+          model:
+            (live as { platformModel?: string }).platformModel ??
+            deps.costTracker?.getMetrics().model ??
+            null,
         });
       }
     }

@@ -491,6 +491,9 @@ function normalizeAntigravityInput(data: Record<string, unknown>, argv: string[]
     transcript_path: typeof data.transcriptPath === 'string' ? data.transcriptPath : undefined,
     error: errorStr,
     _platform: 'antigravity',
+    // Short conversationId as session name fallback when no workspace path is set
+    session_name:
+      typeof data.conversationId === 'string' ? data.conversationId.slice(0, 8) : undefined,
   };
 }
 
