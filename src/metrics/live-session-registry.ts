@@ -28,13 +28,16 @@ export class LiveSessionRegistry {
 
   touch(sessionId: string, cwd?: string, fallbackName?: string): void {
     this.lastActivity.set(sessionId, Date.now());
-    if (!this.sessionNames.has(sessionId)) {
-      const cwdName = cwd ? basename(cwd) : undefined;
-      const resolved =
-        cwdName && cwdName.length > 0 && cwdName !== '.' && cwdName !== '..'
-          ? cwdName
-          : fallbackName;
-      if (resolved) this.sessionNames.set(sessionId, resolved);
+    const cwdName = cwd ? basename(cwd) : undefined;
+    const isRealName =
+      cwdName !== undefined && cwdName.length > 0 && cwdName !== '.' && cwdName !== '..';
+    const existing = this.sessionNames.get(sessionId);
+    // Always prefer a real directory name over a UUID fallback.
+    // Set on first touch, or upgrade from fallback to real name.
+    if (isRealName) {
+      this.sessionNames.set(sessionId, cwdName!);
+    } else if (!existing && fallbackName) {
+      this.sessionNames.set(sessionId, fallbackName);
     }
     const liveCount = this.getLiveSessions().length;
     if (liveCount > this.peakConcurrent) {
