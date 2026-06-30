@@ -1157,9 +1157,20 @@ async function main(): Promise<void> {
               .filter((m) => m.resolvedModelId !== undefined)
               .sort((a, b) => a.remainingFraction - b.remainingFraction)[0]?.resolvedModelId;
 
-          // Set the Gemini model in the session tracker so it appears in
-          // the session name and model usage widget instead of claude-sonnet.
+          // Set the primary model in the session tracker so it appears in the
+          // session name and model usage widget instead of claude-sonnet.
           if (primaryModel) sessionTracker?.setPlatformModel(primaryModel);
+
+          // Register all resolved models from the snapshot in the usage tracker
+          // on baseline/first poll so the Today page model widget shows all
+          // available Antigravity models (including GPT-OSS at 100% quota which
+          // never generates a delta since it uses a separate quota pool).
+          if (!delta) {
+            for (const m of snapshot.models) {
+              const modelKey = m.resolvedModelId;
+              if (modelKey) modelUsageTracker.recordUsage(modelKey, 0, 0, 0);
+            }
+          }
 
           // Always feed local cost tracker AND model usage tracker so all
           // dashboard widgets update with the Antigravity model data.
