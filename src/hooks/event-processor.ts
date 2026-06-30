@@ -32,6 +32,12 @@ export interface HookEventProcessorOptions {
    * live session.
    */
   drainAllSessions?: boolean;
+  /**
+   * When true (and drainAllSessions is true), buffers that have a live
+   * active-<sessionId>.pid heartbeat are skipped so a --stdio MCP that owns
+   * that session can process its own events and compute rich analytics.
+   */
+  skipActiveHeartbeats?: boolean;
   onRecord: (record: ToolCallRecord) => void;
   onTokenEvent?: (event: TokenEvent) => void;
 }
@@ -45,6 +51,7 @@ export class HookEventProcessor {
   private readonly pollIntervalMs: number;
   private readonly orphanTimeoutMs: number;
   private drainAllSessions: boolean;
+  private readonly skipActiveHeartbeats: boolean;
   private readonly onRecord: (record: ToolCallRecord) => void;
   private readonly onTokenEvent: ((event: TokenEvent) => void) | null;
 
@@ -61,6 +68,7 @@ export class HookEventProcessor {
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     this.orphanTimeoutMs = options.orphanTimeoutMs ?? DEFAULT_ORPHAN_TIMEOUT_MS;
     this.drainAllSessions = options.drainAllSessions ?? false;
+    this.skipActiveHeartbeats = options.skipActiveHeartbeats ?? false;
     this.maxPendingEvents = options.maxPendingEvents ?? DEFAULT_MAX_PENDING;
     this.onRecord = options.onRecord;
     this.onTokenEvent = options.onTokenEvent ?? null;
@@ -186,7 +194,9 @@ export class HookEventProcessor {
   }
 
   private drainOnce(): HookEvent[] {
-    return this.drainAllSessions ? this.store.drainAllBuffers() : this.store.drainBuffer();
+    return this.drainAllSessions
+      ? this.store.drainAllBuffers({ skipActiveHeartbeats: this.skipActiveHeartbeats })
+      : this.store.drainBuffer();
   }
 
   private handlePreEvent(event: HookEvent): void {

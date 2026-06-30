@@ -145,8 +145,14 @@ export class LocalStore {
    * sessions' events. Each file is drained atomically (rename-then-read) so a
    * concurrent writer for that session can't lose events; orphan files (whose
    * MCP isn't running) are picked up too.
+   *
+   * When `skipActiveHeartbeats` is true, buffers that have a live
+   * `active-<sessionId>.pid` heartbeat are skipped. This prevents `--local`
+   * from racing with a `--stdio` MCP that owns the session — the `--stdio`
+   * session drains its own buffer and computes full analytics; `--local` reads
+   * the rich persisted session file after the MCP exits.
    */
-  drainAllBuffers(): HookEvent[] {
+  drainAllBuffers(options?: { skipActiveHeartbeats?: boolean }): HookEvent[] {
     const all: HookEvent[] = [];
     let entries: string[];
     try {
@@ -161,6 +167,24 @@ export class LocalStore {
       // buffer.jsonl so a freshly-upgraded user's pre-Fix-3 events still flow.
       if (!name.endsWith('.jsonl')) continue;
       if (name !== 'buffer.jsonl' && !name.startsWith('buffer-')) continue;
+
+      // If requested, skip buffers owned by a live --stdio MCP session.
+      if (options?.skipActiveHeartbeats && name.startsWith('buffer-')) {
+        const sessionId = name.slice('buffer-'.length, -'.jsonl'.length);
+        const heartbeatPath = resolve(this.storagePath, `active-${sessionId}.pid`);
+        if (existsSync(heartbeatPath)) {
+          try {
+            const pid = Number.parseInt(readFileSync(heartbeatPath, 'utf-8').trim(), 10);
+            if (isPidAlive(pid)) {
+              logger.debug('drainAllBuffers: skipping live --stdio session', { sessionId, pid });
+              continue;
+            }
+          } catch {
+            // Unreadable heartbeat — drain as normal (treat as orphan)
+          }
+        }
+      }
+
       const drained = this.drainPath(resolve(this.storagePath, name));
       if (drained.length > 0) {
         for (const event of drained) all.push(event);

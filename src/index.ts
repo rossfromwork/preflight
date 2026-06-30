@@ -582,6 +582,10 @@ async function main(): Promise<void> {
   };
   process.on('SIGINT', handleSignal);
   process.on('SIGTERM', handleSignal);
+  // SIGHUP: sent when the parent process (e.g. agy) exits while the MCP
+  // server is still running. Without this handler Node.js terminates
+  // immediately, skipping persistSession() and losing rich analytics.
+  process.on('SIGHUP', handleSignal);
 
   if (options.stdio || options.local) {
     let sessionTraceId: string;
@@ -1215,6 +1219,9 @@ async function main(): Promise<void> {
       // live sessions' events. After real session ID resolution the processor
       // is hot-swapped to the scoped store via replaceStore().
       drainAllSessions: !options.stdio || isProvisional,
+      // In --local mode, skip buffers owned by a live --stdio MCP session so
+      // that session can compute full analytics without racing for its events.
+      skipActiveHeartbeats: options.local === true,
       onRecord: (record) => {
         if (!config || !sessionTracker || !taskDetector) {
           logger.warn('onRecord called before full initialization; skipping');
