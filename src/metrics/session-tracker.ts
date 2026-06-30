@@ -139,6 +139,8 @@ export class SessionTracker {
 
     // Derive session name from cwd; prefer a later, more meaningful name if the
     // current one is a degenerate system directory (tmp, var, usr, etc.).
+    // Fall back to session_name (short conversationId) for platforms like agy
+    // that may not always provide a workspace path.
     const DEGENERATE_NAMES = new Set(['tmp', 'temp', 'var', 'usr', 'opt', 'home', '.', '..', '']);
     if (typeof record.cwd === 'string' && record.cwd.length > 0) {
       const name = basename(record.cwd);
@@ -147,6 +149,8 @@ export class SessionTracker {
           this.sessionName = name;
         }
       }
+    } else if (this.sessionName === null && typeof record.session_name === 'string') {
+      this.sessionName = record.session_name as string;
     }
 
     // Per-tool count

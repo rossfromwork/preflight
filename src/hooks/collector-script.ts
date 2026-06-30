@@ -739,6 +739,7 @@ function processHook(raw: string, argv: string[] = process.argv): void {
   if (data.session_id) event.sessionId = data.session_id;
   if (data.tool_use_id) event.toolUseId = data.tool_use_id;
   if (data._platform) event.platform = data._platform;
+  if (data.session_name) event.session_name = data.session_name;
 
   // Write to buffer — wrapped in try/catch for resilience.
   try {

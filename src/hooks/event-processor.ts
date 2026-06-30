@@ -265,6 +265,7 @@ export class HookEventProcessor {
           permissionMode: preEvent.permissionMode as string,
         }),
         ...(platform !== undefined && { platform }),
+        ...(preEvent.session_name !== undefined && { session_name: preEvent.session_name }),
         ...toolFields,
       };
       this.emitRecord(record);
