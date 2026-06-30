@@ -58,6 +58,7 @@ preflight/
       tool-parsers.ts               # INPUT_PARSERS / OUTPUT_PARSERS for tool fields
       bash-classifier.ts            # classifyBash() — coarse Bash command classifier (category/leading/isDestructive/isNetwork)
     metrics/                        # metric analyzer classes
+      antigravity-quota-poller.ts   # Polls agy language server Connect RPC for quota/model data
       session-tracker.ts            # Per-session tool call tracking
       cost-tracker.ts               # Token cost calculation (per-model)
       cost-forecast.ts              # Burn-rate-based session/day/week cost projections
@@ -77,7 +78,7 @@ preflight/
       task-completion-tracker.ts    # Task lifecycle tracking (completed/abandoned)
       model-usage-tracker.ts        # Cost-efficiency per AI model
       personal-coach.ts             # Narrative coaching report comparing weekly metrics to personal baseline
-    platforms/                      # 8 platform adapters
+    platforms/                      # 9 platform adapters
       claude-code-adapter.ts        # Claude Code (default)
       cursor-adapter.ts             # Cursor IDE
       windsurf-adapter.ts           # Windsurf IDE
@@ -85,6 +86,7 @@ preflight/
       zed-adapter.ts                # Zed IDE
       continue-adapter.ts           # Continue.dev
       amazon-q-adapter.ts           # Amazon Q Developer
+      antigravity-adapter.ts        # Antigravity CLI (agy) — added in this fork
       generic-mcp-adapter.ts        # Generic fallback adapter for any MCP-speaking client
       platform-registry.ts          # Registry + factory
     proxy/                          # HTTP proxy layer
@@ -114,8 +116,8 @@ preflight/
     transport/
       nr-ingest.ts                  # NrIngestManager (events + metrics + logs)
       log-ingest.ts                 # Log ingestion with buffering
-    install/                        # Claude Code hook installation CLI
-      cli.ts                        # preflight install/uninstall commands
+    install/                        # Hook installation CLI (Claude Code + Antigravity)
+      cli.ts                        # preflight install/uninstall/install --platform antigravity
       setup-wizard.ts               # preflight setup interactive wizard
       migrate.ts                    # migrateStoragePath() — one-time rename ~/.nr-ai-observe → ~/.newrelic-preflight
     alerts/                         # Alert TypeScript types + validation tests
@@ -132,12 +134,20 @@ preflight/
 
 ### Data Flow (MCP Server — Stdio Mode)
 
+Works for both Claude Code and Antigravity CLI (`agy`). The hook payload format
+differs per platform but is normalised to a common shape by `collector-script.ts`.
+
 ```
-Claude Code
+Claude Code / Antigravity CLI (agy)
   │
-  ├─ PreToolUse / PostToolUse hooks
+  ├─ PreToolUse / PostToolUse hooks  (Claude Code format)
+  │   OR PreToolUse / PostToolUse hooks  (agy toolCall format — normalised in collector)
   │    └─> preflight (collector-script.ts)
-  │         └─> writes to buffer.jsonl (LocalStore)
+  │         └─> writes to buffer-<sessionId>.jsonl (LocalStore)
+  │
+  ├─ [agy only] AntigravityQuotaPoller
+  │    └─> polls agy language server Connect RPC every 30s
+  │         └─> quota snapshot → estimated tokens/cost → modelUsageTracker
   │
   └─ MCP stdio connection
        └─> NrMcpServer (server.ts)
