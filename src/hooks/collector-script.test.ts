@@ -15,6 +15,9 @@ import {
   getTranscriptPath,
   getBufferPath,
   writePpidBreadcrumb,
+  isAntigravityPayload,
+  normalizeAntigravityInput,
+  AGY_TOOL_MAP,
 } from './collector-script.js';
 
 let stderrSpy: ReturnType<typeof jest.spyOn>;
@@ -388,6 +391,153 @@ describe('collector-script', () => {
       );
 
       expect(readBufferEvents()).toHaveLength(0);
+    });
+  });
+
+  describe('Antigravity CLI normalisation', () => {
+    describe('isAntigravityPayload()', () => {
+      it('returns true for valid agy payload', () => {
+        expect(isAntigravityPayload({ conversationId: 'abc-123', stepIdx: 0 })).toBe(true);
+      });
+
+      it('returns false when hook_event_name is present (Claude Code payload)', () => {
+        expect(
+          isAntigravityPayload({
+            conversationId: 'abc-123',
+            stepIdx: 0,
+            hook_event_name: 'PreToolUse',
+          }),
+        ).toBe(false);
+      });
+
+      it('returns false when stepIdx is negative (robustness guard)', () => {
+        expect(isAntigravityPayload({ conversationId: 'abc-123', stepIdx: -1 })).toBe(false);
+      });
+
+      it('returns false when conversationId is missing', () => {
+        expect(isAntigravityPayload({ stepIdx: 0 })).toBe(false);
+      });
+
+      it('returns false when stepIdx is not a number', () => {
+        expect(isAntigravityPayload({ conversationId: 'abc-123', stepIdx: 'zero' })).toBe(false);
+      });
+    });
+
+    describe('normalizeAntigravityInput()', () => {
+      const basePayload = {
+        toolCall: { name: 'view_file', args: { AbsolutePath: '/tmp/foo.ts' } },
+        stepIdx: 5,
+        conversationId: 'test-conv-id',
+        workspacePaths: ['/tmp/my-project'],
+        transcriptPath: '/tmp/transcript.jsonl',
+      };
+
+      it('maps view_file to Read and normalises AbsolutePath', () => {
+        const result = normalizeAntigravityInput(basePayload, ['node', 'script', 'pre-tool']);
+        expect(result.tool_name).toBe('Read');
+        expect((result.tool_input as Record<string, unknown>)?.file_path).toBe('/tmp/foo.ts');
+      });
+
+      it('sets hook_event_name to PreToolUse for pre-tool', () => {
+        const result = normalizeAntigravityInput(basePayload, ['node', 'script', 'pre-tool']);
+        expect(result.hook_event_name).toBe('PreToolUse');
+      });
+
+      it('sets hook_event_name to PostToolUse for post-tool with no error', () => {
+        const postPayload = {
+          stepIdx: 5,
+          error: '',
+          conversationId: 'test-conv-id',
+          workspacePaths: ['/tmp/my-project'],
+        };
+        const result = normalizeAntigravityInput(postPayload, ['node', 'script', 'post-tool']);
+        expect(result.hook_event_name).toBe('PostToolUse');
+      });
+
+      it('sets hook_event_name to PostToolUseFailure when error is present', () => {
+        const failPayload = {
+          stepIdx: 5,
+          error: 'exit status 1',
+          conversationId: 'test-conv-id',
+          workspacePaths: [],
+        };
+        const result = normalizeAntigravityInput(failPayload, ['node', 'script', 'post-tool']);
+        expect(result.hook_event_name).toBe('PostToolUseFailure');
+      });
+
+      it('uses conversationId as session_id and first workspacePath as cwd', () => {
+        const result = normalizeAntigravityInput(basePayload, ['node', 'script', 'pre-tool']);
+        expect(result.session_id).toBe('test-conv-id');
+        expect(result.cwd).toBe('/tmp/my-project');
+      });
+
+      it('sets session_name to first 8 chars of conversationId', () => {
+        const result = normalizeAntigravityInput(basePayload, ['node', 'script', 'pre-tool']);
+        expect(result.session_name).toBe('test-con');
+      });
+
+      it('maps run_command to Bash and normalises CommandLine', () => {
+        const payload = {
+          toolCall: { name: 'run_command', args: { CommandLine: 'npm test', Cwd: '/tmp' } },
+          stepIdx: 1,
+          conversationId: 'c',
+          workspacePaths: [],
+        };
+        const result = normalizeAntigravityInput(payload, ['node', 'script', 'pre-tool']);
+        expect(result.tool_name).toBe('Bash');
+        expect((result.tool_input as Record<string, unknown>)?.command).toBe('npm test');
+      });
+    });
+
+    describe('AGY_TOOL_MAP', () => {
+      it('maps all 20 agy tools to canonical names', () => {
+        expect(AGY_TOOL_MAP['run_command']).toBe('Bash');
+        expect(AGY_TOOL_MAP['view_file']).toBe('Read');
+        expect(AGY_TOOL_MAP['write_to_file']).toBe('Write');
+        expect(AGY_TOOL_MAP['replace_file_content']).toBe('Edit');
+        expect(AGY_TOOL_MAP['grep_search']).toBe('Grep');
+        expect(AGY_TOOL_MAP['find_by_name']).toBe('Glob');
+        expect(AGY_TOOL_MAP['search_web']).toBe('WebSearch');
+        expect(AGY_TOOL_MAP['invoke_subagent']).toBe('Agent');
+        expect(Object.keys(AGY_TOOL_MAP).length).toBeGreaterThanOrEqual(15);
+      });
+    });
+
+    describe('Antigravity PreToolUse — decision output + buffer write', () => {
+      it('writes {"decision":"allow"} to stdout for agy PreToolUse', () => {
+        process.env.NEW_RELIC_AI_MCP_STORAGE_PATH = tmpDir;
+        const stdoutSpy = jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
+
+        processHook(
+          JSON.stringify({
+            toolCall: { name: 'list_dir', args: { DirectoryPath: '/tmp' } },
+            stepIdx: 1,
+            conversationId: 'decision-test',
+            workspacePaths: ['/tmp'],
+          }),
+          ['node', 'script', 'pre-tool'],
+        );
+
+        expect(stdoutSpy).toHaveBeenCalledWith(expect.stringContaining('"decision":"allow"'));
+        stdoutSpy.mockRestore();
+      });
+
+      it('does not write to stdout for Claude Code PreToolUse', () => {
+        process.env.NEW_RELIC_AI_MCP_STORAGE_PATH = tmpDir;
+        const stdoutSpy = jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
+
+        processHook(
+          JSON.stringify({
+            hook_event_name: 'PreToolUse',
+            tool_name: 'Bash',
+            tool_input: { command: 'ls' },
+            session_id: 'claude-sess',
+          }),
+        );
+
+        expect(stdoutSpy).not.toHaveBeenCalled();
+        stdoutSpy.mockRestore();
+      });
     });
   });
 

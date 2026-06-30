@@ -381,6 +381,21 @@ describe('SessionTracker', () => {
       expect(metrics.toolCallTimeline).toHaveLength(0);
     });
 
+    it('clears platform and platformModel on reset', () => {
+      const tracker = new SessionTracker('old-session');
+      // Set platform-related fields via tool call and setter
+      tracker.recordToolCall(makeRecord({ toolName: 'Bash', platform: 'antigravity' }));
+      tracker.setPlatformModel('gemini-3.1-pro');
+
+      expect(tracker.getMetrics().platform).toBe('antigravity');
+      expect(tracker.getMetrics().platformModel).toBe('gemini-3.1-pro');
+
+      tracker.reset('new-session');
+
+      expect(tracker.getMetrics().platform).toBeUndefined();
+      expect(tracker.getMetrics().platformModel).toBeUndefined();
+    });
+
     it('throws when reset is called without a sessionId', () => {
       const tracker = new SessionTracker('old-session');
       // Cast through unknown to force the bad-call shape; runtime guard must throw.
