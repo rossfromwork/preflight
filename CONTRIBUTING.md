@@ -288,7 +288,7 @@ This codebase sends telemetry to New Relic and can spawn child processes and pro
 - **HTTP upstream URLs are SSRF-checked.** `HttpUpstream` rejects non-`http:`/`https:` schemes and RFC-1918/loopback hosts.
 - **High security mode is absolute.** When `highSecurity=true`, `recordContent` is always `false`. Never bypass this.
 
-See [SECURITY.md](./docs/SECURITY.md) for the full guidelines and code review checklist.
+See [SECURITY.md](./SECURITY.md) for the full guidelines and code review checklist.
 
 ---
 
@@ -432,6 +432,8 @@ Expected:
 
 If you see `tool not found` or `MCP server unavailable`, the server didn't start. Check Claude Code's MCP output panel (View → Output → MCP) for errors, then re-run `preflight install` and restart.
 
+**WSL users:** Pass `--windows-cc` or `--linux-cc` to target the right Claude Code installation. Run `preflight setup` if unsure — the wizard will ask.
+
 **Checkpoint — local dashboard (local path only):**
 
 ```bash
@@ -518,7 +520,7 @@ Then restart Claude Code.
 ## Where to Get Help
 
 - **[CLAUDE.md](./CLAUDE.md)** — Full technical reference: architecture, conventions, every pattern in detail.
-- **[SECURITY.md](./docs/SECURITY.md)** — Security practices, invariants, and code review checklist. Read before any PR touching config loading, network requests, subprocess execution, or telemetry fields.
+- **[SECURITY.md](./SECURITY.md)** — Security practices, invariants, and code review checklist. Read before any PR touching config loading, network requests, subprocess execution, or telemetry fields.
 - **[TEST_PATTERNS.md](./docs/TEST_PATTERNS.md)** — Testing conventions, factory patterns, mock strategies.
 - **[COMMANDS_TABLE.md](./docs/COMMANDS_TABLE.md)** — All MCP tools with parameters and return schemas.
 - **[METRICS_TABLE.md](./docs/METRICS_TABLE.md)** — Every NR event and metric, field definitions, delivery mechanism.

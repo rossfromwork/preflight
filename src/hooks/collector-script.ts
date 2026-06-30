@@ -1,15 +1,20 @@
 #!/usr/bin/env node
 /**
- * Hook collector script for Claude Code PreToolUse / PostToolUse / PostToolUseFailure hooks.
+ * Hook collector script for Claude Code, Antigravity CLI, and Gemini CLI hooks.
  *
- * Called by Claude Code on every tool invocation. Reads the hook JSON from stdin,
- * extracts key fields, and appends a single JSONL line to the buffer file.
+ * Called on every tool invocation. Reads the hook JSON from stdin, normalises
+ * platform-specific formats to a common shape, and appends a single JSONL line
+ * to the buffer file.
  *
  * Design constraints:
- *   - <5ms execution budget — must never slow Claude Code
+ *   - <5ms execution budget — must never slow the host AI tool
  *   - No heavy imports (no shared package, no commander, no zod)
  *   - All errors caught silently — always exits 0
  *   - Config via env vars only (no file reads for config)
+ *
+ * Supported platforms:
+ *   - Claude Code  — PreToolUse / PostToolUse / PostToolUseFailure hook format
+ *   - Antigravity CLI (agy) — toolCall-based hook format; outputs {"decision":"allow"} on stdout
  */
 
 import {
@@ -76,13 +81,7 @@ const HIGH_SECURITY_FROM_FILE: boolean = (() => {
 })();
 
 function getHighSecurity(): boolean {
-  // Accept both names — NEW_RELIC_AI_HIGH_SECURITY matches config.ts (preferred);
-  // NEW_RELIC_AI_MCP_HIGH_SECURITY is the legacy collector-only name.
-  return (
-    process.env.NEW_RELIC_AI_HIGH_SECURITY === 'true' ||
-    process.env.NEW_RELIC_AI_MCP_HIGH_SECURITY === 'true' ||
-    HIGH_SECURITY_FROM_FILE
-  );
+  return process.env.NEW_RELIC_AI_HIGH_SECURITY === 'true' || HIGH_SECURITY_FROM_FILE;
 }
 
 function getRecordContent(): boolean {
@@ -401,7 +400,106 @@ interface HookInput {
   transcript_path?: string;
   error?: string;
   is_interrupt?: boolean;
+  _platform?: string;
   [key: string]: unknown;
+}
+
+// ---------------------------------------------------------------------------
+// Antigravity CLI normalisation
+// ---------------------------------------------------------------------------
+
+const AGY_TOOL_MAP: Record<string, string> = {
+  // File and directory operations
+  run_command: 'Bash',
+  view_file: 'Read',
+  write_to_file: 'Write',
+  replace_file_content: 'Edit',
+  multi_replace_file_content: 'Edit',
+  grep_search: 'Grep',
+  find_by_name: 'Glob',
+  list_dir: 'Read',
+  // Search and research
+  search_web: 'WebSearch',
+  read_url_content: 'WebFetch',
+  // Agent collaboration
+  invoke_subagent: 'Agent',
+  define_subagent: 'Agent',
+  manage_subagents: 'Agent',
+  send_message: 'AgentMessage',
+  // Interaction and media
+  ask_question: 'AskUserQuestion',
+  generate_image: 'GenerateImage',
+  // System and execution (agy-specific, no Claude Code equivalent)
+  manage_task: 'TaskManage',
+  schedule: 'Schedule',
+  list_permissions: 'ListPermissions',
+  ask_permission: 'AskPermission',
+};
+
+function isAntigravityPayload(data: Record<string, unknown>): boolean {
+  // Antigravity payloads always carry conversationId + a non-negative stepIdx.
+  // Claude Code payloads always carry hook_event_name instead.
+  // The stepIdx >= 0 guard prevents false-positives from malformed payloads.
+  return (
+    typeof data.conversationId === 'string' &&
+    typeof data.stepIdx === 'number' &&
+    data.stepIdx >= 0 &&
+    data.hook_event_name === undefined
+  );
+}
+
+function normalizeAgyArgs(toolName: string, args: unknown): Record<string, unknown> | undefined {
+  if (!args || typeof args !== 'object') return undefined;
+  const a = args as Record<string, unknown>;
+  switch (toolName) {
+    case 'run_command':
+      return { command: a.CommandLine, timeout: a.WaitMsBeforeAsync };
+    case 'view_file':
+      return { file_path: a.AbsolutePath, offset: a.StartLine, limit: a.EndLine };
+    case 'write_to_file':
+      return { file_path: a.TargetFile, content: a.CodeContent };
+    case 'replace_file_content':
+    case 'multi_replace_file_content':
+      return {
+        file_path: a.TargetFile,
+        old_string: a.TargetContent,
+        new_string: a.ReplacementContent,
+      };
+    case 'grep_search':
+      return { pattern: a.Query, path: a.SearchPath };
+    case 'find_by_name':
+      return { pattern: a.Pattern, path: a.SearchDirectory };
+    default:
+      return a;
+  }
+}
+
+function normalizeAntigravityInput(data: Record<string, unknown>, argv: string[]): HookInput {
+  const isPreTool = argv[2] === 'pre-tool';
+  const toolCall = data.toolCall as Record<string, unknown> | undefined;
+  const rawToolName = typeof toolCall?.name === 'string' ? toolCall.name : 'unknown';
+  const errorStr = typeof data.error === 'string' ? data.error : undefined;
+
+  // PostToolUse with a non-empty error field maps to PostToolUseFailure
+  const eventName = isPreTool ? 'PreToolUse' : errorStr ? 'PostToolUseFailure' : 'PostToolUse';
+
+  return {
+    hook_event_name: eventName,
+    tool_name: AGY_TOOL_MAP[rawToolName] ?? rawToolName,
+    tool_input: normalizeAgyArgs(rawToolName, toolCall?.args),
+    tool_use_id: String(data.stepIdx ?? ''),
+    session_id: typeof data.conversationId === 'string' ? data.conversationId : undefined,
+    cwd: Array.isArray(data.workspacePaths) ? (data.workspacePaths[0] as string) : undefined,
+    transcript_path: typeof data.transcriptPath === 'string' ? data.transcriptPath : undefined,
+    error: errorStr,
+    // _platform: internal marker written to the buffer event to indicate the source
+    // platform. Prefixed with _ to distinguish it from external hook input fields
+    // and prevent accidental collisions with Claude Code's hook schema.
+    _platform: 'antigravity',
+    // Short conversationId as session name fallback when no workspace path is set
+    session_name:
+      typeof data.conversationId === 'string' ? data.conversationId.slice(0, 8) : undefined,
+  };
 }
 
 /**
@@ -557,16 +655,19 @@ function extractOutputMeta(toolName: string, output: unknown): Record<string, un
   return undefined;
 }
 
-function processHook(raw: string): void {
+function processHook(raw: string, argv: string[] = process.argv): void {
   let data: HookInput;
   try {
-    data = JSON.parse(raw) as HookInput;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    data = isAntigravityPayload(parsed)
+      ? normalizeAntigravityInput(parsed, argv)
+      : (parsed as HookInput);
   } catch {
     return; // Malformed JSON — skip silently
   }
 
   // Drop a PPID breadcrumb at the very top so the MCP server can resolve its
-  // Claude Code session_id without an env-var or initialize-payload extension.
+  // session_id without an env-var or initialize-payload extension.
   // The function itself is a no-op when sessionId is missing or invalid, and
   // short-circuits if the breadcrumb is already current.
   if (typeof data.session_id === 'string' && data.session_id.length > 0) {
@@ -642,6 +743,8 @@ function processHook(raw: string): void {
   if (data.permission_mode) event.permissionMode = data.permission_mode;
   if (data.session_id) event.sessionId = data.session_id;
   if (data.tool_use_id) event.toolUseId = data.tool_use_id;
+  if (data._platform) event.platform = data._platform;
+  if (data.session_name) event.session_name = data.session_name;
 
   // Write to buffer — wrapped in try/catch for resilience.
   try {
@@ -667,9 +770,15 @@ function processHook(raw: string): void {
     // Silent failure — never block Claude Code
   }
 
+  // Antigravity PreToolUse hooks must output a decision or agy will prompt the user.
+  if (data._platform === 'antigravity' && eventName === 'PreToolUse') {
+    process.stdout.write(JSON.stringify({ decision: 'allow' }) + '\n');
+  }
+
   // After writing the tool event, collect token usage from the transcript.
   // Only on PostToolUse — each assistant turn produces exactly one usage object.
-  if (eventName === 'PostToolUse') {
+  // Antigravity has no Claude-style transcript; token usage comes from the quota poller.
+  if (eventName === 'PostToolUse' && data._platform !== 'antigravity') {
     try {
       collectTranscriptTokens(data);
     } catch {
@@ -691,6 +800,10 @@ export {
   getTranscriptPath,
   getBufferPath,
   writePpidBreadcrumb,
+  isAntigravityPayload,
+  normalizeAntigravityInput,
+  normalizeAgyArgs,
+  AGY_TOOL_MAP,
 };
 
 // ---------------------------------------------------------------------------

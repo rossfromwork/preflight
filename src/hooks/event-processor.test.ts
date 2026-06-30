@@ -178,6 +178,54 @@ describe('HookEventProcessor', () => {
     });
   });
 
+  describe('processEvents() — synthetic Antigravity model-response PostToolUse', () => {
+    it('drops orphaned post events with tool=unknown and no toolInput', () => {
+      const processor = new HookEventProcessor({ store, onRecord });
+      // Simulate agy's synthetic model-response step: PostToolUse with no PreToolUse,
+      // tool='unknown', no toolInput — these are noise from agy's internal planner steps.
+      processor.processEvents([
+        makePostEvent({ tool: 'unknown', toolUseId: 'agy-synth-0', timestamp: 1000 }),
+      ]);
+      expect(records).toHaveLength(0);
+    });
+
+    it('still emits orphaned post when tool has a real name', () => {
+      const processor = new HookEventProcessor({ store, onRecord });
+      processor.processEvents([
+        makePostEvent({ tool: 'Bash', toolUseId: 'agy-orphan-bash', timestamp: 1000 }),
+      ]);
+      expect(records).toHaveLength(1);
+      expect(records[0]!.toolName).toBe('Bash');
+    });
+
+    it('still emits orphaned post with tool=unknown when toolInput is present', () => {
+      const processor = new HookEventProcessor({ store, onRecord });
+      processor.processEvents([
+        makePostEvent({
+          tool: 'unknown',
+          toolUseId: 'agy-orphan-with-input',
+          timestamp: 1000,
+          toolInput: { file_path: '/tmp/foo.ts' },
+        }),
+      ]);
+      expect(records).toHaveLength(1);
+      expect(records[0]!.toolName).toBe('unknown');
+    });
+
+    it('pairs agy pre+post correctly and drops synthetic orphan', () => {
+      const processor = new HookEventProcessor({ store, onRecord });
+      processor.processEvents([
+        // Real tool call: PreToolUse then PostToolUse
+        makePreEvent({ tool: 'Read', toolUseId: 'step-5', timestamp: 1000 }),
+        makePostEvent({ tool: 'unknown', toolUseId: 'step-5', timestamp: 1050 }),
+        // Synthetic model-response: PostToolUse only, no Pre
+        makePostEvent({ tool: 'unknown', toolUseId: 'step-6', timestamp: 1100 }),
+      ]);
+      expect(records).toHaveLength(1);
+      expect(records[0]!.toolName).toBe('Read');
+    });
+  });
+
   describe('orphan timeout sweep', () => {
     it('emits timeout record for pre events older than orphanTimeoutMs', () => {
       const processor = new HookEventProcessor({
@@ -423,10 +471,10 @@ describe('HookEventProcessor', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Pending map size cap (M-04)
+  // Pending map size cap
   // ---------------------------------------------------------------------------
 
-  describe('pending map size cap (M-04)', () => {
+  describe('pending map size cap', () => {
     it('does not exceed maxPendingEvents entries in the pending map', () => {
       const processor = new HookEventProcessor({ store, onRecord, maxPendingEvents: 5 });
 
@@ -524,10 +572,10 @@ describe('HookEventProcessor', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Edge cases: duplication, out-of-order arrivals, fallback collision (F-129)
+  // Edge cases: duplication, out-of-order arrivals, fallback collision
   // ---------------------------------------------------------------------------
 
-  describe('duplicate pre-events / out-of-order arrivals (F-129)', () => {
+  describe('duplicate pre-events / out-of-order arrivals', () => {
     it('second pre-event with same toolUseId overwrites the first; post pairs with the second', () => {
       const processor = new HookEventProcessor({ store, onRecord });
 

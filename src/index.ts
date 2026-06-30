@@ -4,7 +4,8 @@ import 'dotenv/config';
 import { readFileSync, realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Command } from 'commander';
-import { VERSION, createLogger } from './shared/index.js';
+import { createLogger } from './shared/index.js';
+import { VERSION } from './version.js';
 import { createServer } from './server.js';
 import { loadMcpConfig, DEFAULT_STORAGE_PATH } from './config.js';
 import { ProxyManager } from './proxy/index.js';
@@ -95,6 +96,8 @@ export {
   PlatformRegistry,
   createDefaultRegistry,
 } from './platforms/index.js';
+import { AntigravityQuotaPoller } from './metrics/antigravity-quota-poller.js';
+import { createDefaultRegistry } from './platforms/index.js';
 export type {
   NormalizedToolCall,
   PlatformConfig,
@@ -325,7 +328,12 @@ export async function dispatchSubcommand(argv: string[]): Promise<number | null>
   // CLI subcommands (install/setup/etc.) delegate entirely to the install CLI.
   if (['install', 'uninstall', 'setup', 'validate', 'update', 'schedule'].includes(sub)) {
     const { runInstallCli } = await import('./install/cli.js');
-    await runInstallCli(argv.slice(2));
+    try {
+      await runInstallCli(argv.slice(2));
+    } catch {
+      // Error message already printed by the action handler before throwing.
+      return 1;
+    }
     return typeof process.exitCode === 'number' ? process.exitCode : 0;
   }
 
@@ -512,6 +520,7 @@ async function main(): Promise<void> {
   // Aborts the async resolveSessionId polling loop when shutdown fires so
   // the breadcrumb poll does not outlive the process.
   let sessionResolutionAbort: AbortController | undefined;
+  let quotaPoller: AntigravityQuotaPoller | undefined;
 
   let shuttingDown = false;
   const shutdown = async () => {
@@ -545,6 +554,7 @@ async function main(): Promise<void> {
         alertRulesWatcher = undefined;
       }
       eventProcessor?.stop();
+      quotaPoller?.stop();
       liveSessionRegistry?.stopSampling();
       // Use allSettled so a failure in one stop() doesn't prevent the others.
       const stopResults = await Promise.allSettled([
@@ -573,6 +583,12 @@ async function main(): Promise<void> {
   };
   process.on('SIGINT', handleSignal);
   process.on('SIGTERM', handleSignal);
+  // SIGHUP: sent when a parent process (e.g. agy) terminates its child MCP server.
+  // Without an explicit handler, Node.js exits immediately on SIGHUP without
+  // running any registered signal/exit handlers — persistSession() and shutdown
+  // cleanup are skipped, losing all in-session analytics. Treat it identically
+  // to SIGINT/SIGTERM so graceful shutdown always runs.
+  process.on('SIGHUP', handleSignal);
 
   if (options.stdio || options.local) {
     let sessionTraceId: string;
@@ -1121,6 +1137,74 @@ async function main(): Promise<void> {
       capturedNrIngest = nrIngest;
     }
 
+    // Start Antigravity quota poller when the platform is antigravity or explicitly enabled.
+    // Runs in all modes: local (feeds dashboard only) and cloud/both (feeds NR + dashboard).
+    if (config.antigravityPollingEnabled) {
+      const registry = createDefaultRegistry();
+      const detected = registry.detect();
+      if (detected?.platformName === 'antigravity') {
+        const capturedIngest = capturedNrIngest;
+        const capturedCostTracker = costTracker;
+        quotaPoller = new AntigravityQuotaPoller({
+          pollIntervalMs: config.antigravityPollIntervalMs,
+        });
+        quotaPoller.start((snapshot, delta) => {
+          // Ship to New Relic when in cloud or both mode
+          capturedIngest?.ingestAntigravityQuota(snapshot, delta);
+
+          // Resolve primary model: prefer delta (credit-change driven) then
+          // fall back to the model with the lowest remaining fraction in the snapshot.
+          const primaryModel =
+            delta?.primaryModelId ??
+            snapshot.models
+              .filter((m) => m.resolvedModelId !== undefined)
+              .sort((a, b) => a.remainingFraction - b.remainingFraction)[0]?.resolvedModelId;
+
+          // Set the primary model in the session tracker so it appears in the
+          // session name and model usage widget instead of claude-sonnet.
+          if (primaryModel) sessionTracker?.setPlatformModel(primaryModel);
+
+          // Register all resolved models from the snapshot in the usage tracker
+          // on baseline/first poll so the Today page model widget shows all
+          // available Antigravity models (including GPT-OSS at 100% quota which
+          // never generates a delta since it uses a separate quota pool).
+          if (!delta) {
+            // Register all resolved models with zero usage on the baseline poll so
+            // they appear in the Today page model widget immediately on dashboard
+            // startup. GPT-OSS and other non-Gemini models use separate quota pools
+            // and never generate deltas — without this they would never show.
+            for (const m of snapshot.models) {
+              const modelKey = m.resolvedModelId;
+              if (modelKey) modelUsageTracker.recordUsage(modelKey, 0, 0, 0);
+            }
+          }
+
+          // Always feed local cost tracker AND model usage tracker so all
+          // dashboard widgets update with the Antigravity model data.
+          if (delta && delta.primaryModelId && delta.estimatedInputTokens > 0) {
+            const usage = {
+              inputTokens: delta.estimatedInputTokens,
+              outputTokens: delta.estimatedOutputTokens,
+              thinkingTokens: 0,
+              cacheReadTokens: 0,
+              cacheCreationTokens: 0,
+              totalTokens: delta.estimatedInputTokens + delta.estimatedOutputTokens,
+            };
+            const breakdown = capturedCostTracker?.recordTokenUsage(usage, delta.primaryModelId);
+            // Feed model usage tracker so Today page model widget shows the
+            // Antigravity model (gemini-3.1-pro, gpt-oss-120b, etc.) instead
+            // of only claude-sonnet-4-6 from Claude Code transcript events.
+            modelUsageTracker.recordUsage(
+              delta.primaryModelId,
+              delta.estimatedInputTokens,
+              delta.estimatedOutputTokens,
+              breakdown?.totalUsd ?? delta.estimatedCostUsd,
+            );
+          }
+        });
+      }
+    }
+
     const capturedAlertEngine = alertEngine;
     const capturedAlertSnapshotCollector = alertSnapshotCollector;
     budgetTracker.setOnThreshold((event) => {
@@ -1161,6 +1245,9 @@ async function main(): Promise<void> {
       // live sessions' events. After real session ID resolution the processor
       // is hot-swapped to the scoped store via replaceStore().
       drainAllSessions: !options.stdio || isProvisional,
+      // In --local mode, skip buffers owned by a live --stdio MCP session so
+      // that session can compute full analytics without racing for its events.
+      skipActiveHeartbeats: options.local,
       onRecord: (record) => {
         if (!config || !sessionTracker || !taskDetector) {
           logger.warn('onRecord called before full initialization; skipping');
@@ -1174,7 +1261,11 @@ async function main(): Promise<void> {
         sessionTracker.recordToolCall(record);
         taskDetector.recordToolCall(record);
         if (record.sessionId) {
-          liveSessionRegistry!.touch(record.sessionId, record.cwd as string | undefined);
+          liveSessionRegistry!.touch(
+            record.sessionId,
+            record.cwd as string | undefined,
+            record.session_name as string | undefined,
+          );
         }
 
         if (config.transport !== 'nr-events-api' && taskSpanTracker && sessionSpan) {
@@ -1411,6 +1502,14 @@ async function main(): Promise<void> {
     persistSession = () => {
       if (!sessionStore || !sessionTracker || !taskDetector || !config) return;
       try {
+        // Flush any in-progress task before building the summary. The idle
+        // timeout (default 20s) may not have fired if the session ended quickly
+        // (e.g. agy sends SIGHUP immediately after the last tool call).
+        taskDetector.dispose();
+        for (const task of taskDetector.drainNewlyCompletedTasks()) {
+          const { patterns } = antiPatternDetector.analyze(task.toolCalls);
+          efficiencyScorer.computeScore(task, patterns);
+        }
         const summary = buildSessionSummary({
           sessionTracker,
           costTracker,

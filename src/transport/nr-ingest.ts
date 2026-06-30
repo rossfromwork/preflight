@@ -22,6 +22,7 @@ import {
 
 const logger = createLogger('nr-ingest');
 import { redactSensitive } from '../config.js';
+import { VERSION } from '../version.js';
 import type { ToolCallRecord } from '../storage/types.js';
 import type { ProxyToolCallRecord, ProxyRequestRecord } from '../proxy/types.js';
 import type { AiCodingTask } from '../metrics/task-detector.js';
@@ -41,6 +42,7 @@ import type { AuditRecord } from '../security/index.js';
 import type { TurnCostAttributor } from '../metrics/turn-cost-attributor.js';
 import type { LocalStore } from '../storage/index.js';
 import { LogIngestManager } from './log-ingest.js';
+import type { AgyQuotaSnapshot, AgyQuotaDelta } from '../metrics/antigravity-quota-poller.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -473,12 +475,14 @@ export class NrIngestManager {
         headers: options.otlpHeaders,
         appName: options.appName,
         clientName: 'newrelic-preflight',
+        clientVersion: VERSION,
       });
       otlpEventBridge = new OtlpEventBridge({
         endpoint: options.otlpEndpoint,
         headers: options.otlpHeaders,
         appName: options.appName,
         clientName: 'newrelic-preflight',
+        clientVersion: VERSION,
       });
       // OtlpTransport no longer has an explicit start() — providers initialise in the constructor.
     }
@@ -517,6 +521,7 @@ export class NrIngestManager {
     const transportOptions: TransportOptions = {
       ...options.transportOptions,
       clientName: 'newrelic-preflight',
+      clientVersion: VERSION,
     };
 
     this.scheduler = new HarvestScheduler({
@@ -728,6 +733,67 @@ export class NrIngestManager {
     if (this.orgId) nrEvent.org_id = this.orgId;
     if (this.sessionTraceId != null) nrEvent.session_id = this.sessionTraceId;
     this.scheduler.addEvent(nrEvent);
+  }
+
+  ingestAntigravityQuota(snapshot: AgyQuotaSnapshot, delta: AgyQuotaDelta | null): void {
+    const base: Partial<NrEventData> = {
+      developer: this.developer,
+      appName: this.appName,
+      platform: 'antigravity',
+    };
+    if (this.teamId) base.team_id = this.teamId;
+    if (this.projectId) base.project_id = this.projectId;
+    if (this.orgId) base.org_id = this.orgId;
+    if (this.sessionTraceId != null) base.session_id = this.sessionTraceId;
+
+    // Emit one quota gauge event per model
+    for (const model of snapshot.models) {
+      const nrEvent: NrEventData = {
+        ...base,
+        eventType: 'AiAntigravityQuota',
+        timestamp: snapshot.timestamp,
+        model_id: model.modelId,
+        model_label: model.label ?? '',
+        resolved_model_id: model.resolvedModelId ?? model.modelId,
+        quota_remaining_pct: Math.round(model.remainingFraction * 1000) / 10,
+        prompt_credits_remaining: snapshot.promptCreditsRemaining,
+        prompt_credits_total: snapshot.promptCreditsTotal,
+        ...(model.resetTime !== undefined && { reset_time: model.resetTime }),
+      } as NrEventData;
+      this.scheduler.addEvent(nrEvent);
+    }
+
+    // Emit an estimated token usage event when we have a delta
+    if (delta && (delta.estimatedInputTokens > 0 || delta.estimatedOutputTokens > 0)) {
+      const tokenEvent: NrEventData = {
+        ...base,
+        eventType: 'AiAntigravityTokenEstimate',
+        timestamp: snapshot.timestamp,
+        credits_consumed: delta.creditsConsumed,
+        estimated_input_tokens: delta.estimatedInputTokens,
+        estimated_output_tokens: delta.estimatedOutputTokens,
+        estimated_cost_usd: Math.round(delta.estimatedCostUsd * 1_000_000) / 1_000_000,
+        elapsed_ms: delta.elapsedMs,
+        pricing_note: delta.estimatedCostUsd > 0 ? 'resolved' : 'approximate',
+        ...(delta.primaryModelId !== null && { primary_model_id: delta.primaryModelId }),
+      } as NrEventData;
+      this.scheduler.addEvent(tokenEvent);
+
+      // Feed local cost tracker so dashboard widgets update (model usage, cost)
+      if (this.costTracker) {
+        this.costTracker.recordTokenUsage(
+          {
+            inputTokens: delta.estimatedInputTokens,
+            outputTokens: delta.estimatedOutputTokens,
+            thinkingTokens: 0,
+            cacheReadTokens: 0,
+            cacheCreationTokens: 0,
+            totalTokens: delta.estimatedInputTokens + delta.estimatedOutputTokens,
+          },
+          delta.primaryModelId ?? 'gemini-unknown',
+        );
+      }
+    }
   }
 
   start(): void {

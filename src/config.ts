@@ -44,6 +44,7 @@ export interface McpServerConfig {
   readonly otlpHeaders: Readonly<Record<string, string>>;
   readonly transport: 'nr-events-api' | 'otlp' | 'both';
   readonly mode: 'cloud' | 'local' | 'both';
+  readonly platformTarget?: PlatformTarget;
   /** Enable the local OTLP/HTTP receiver. Default: false. */
   readonly otlpReceiverEnabled: boolean;
   /** Port for the local OTLP/HTTP receiver. Default: 4318. */
@@ -79,9 +80,23 @@ export interface McpServerConfig {
     readonly logRetentionMb: number;
     readonly rulesPath: string;
   };
+  /**
+   * When true, polls the running Antigravity CLI language server for quota
+   * snapshots and emits AiAntigravityQuota events to New Relic.
+   * Defaults to auto-detect (true when AntigravityAdapter is active).
+   * Env: NR_AI_ANTIGRAVITY_POLLING
+   */
+  readonly antigravityPollingEnabled: boolean;
+  /**
+   * Interval in ms between Antigravity quota polls. Default: 30000 (30s).
+   * Env: NR_AI_ANTIGRAVITY_POLL_MS
+   */
+  readonly antigravityPollIntervalMs: number;
 }
 
 export const DEFAULT_STORAGE_PATH = resolve(homedir(), '.newrelic-preflight');
+
+export type PlatformTarget = 'native' | 'wsl-windows-cc' | 'wsl-linux-cc';
 
 const DEFAULT_REDACTION_PATTERNS: RegExp[] = [
   /(?<![a-zA-Z])(?:API_KEY|SECRET|TOKEN|PASSWORD|PASSPHRASE|PRIVATE_KEY)(?![a-zA-Z])[\s]*[=:]\s*\S+/gi,
@@ -134,6 +149,7 @@ export const ConfigFileSchema = z
     otlpHeaders: z.record(z.string(), z.string()).optional(),
     transport: z.enum(['nr-events-api', 'otlp', 'both']).optional(),
     mode: z.enum(['cloud', 'local', 'both']).optional(),
+    platformTarget: z.enum(['native', 'wsl-windows-cc', 'wsl-linux-cc']).optional(),
     otlpReceiverEnabled: z.boolean().optional(),
     otlpReceiverPort: z.number().optional(),
     otlpReceiverBindAddress: z.string().optional(),
@@ -176,7 +192,7 @@ export const ConfigFileSchema = z
   // warn block can see typos like `dashboard.openOnStarrt`.
   .passthrough();
 
-// N-07: strip control chars and truncate before the value reaches any NR event field or log
+// strip control chars and truncate before the value reaches any NR event field or log
 export function sanitizeDeveloper(raw: string): string {
   return (
     raw
@@ -561,7 +577,7 @@ export function loadMcpConfig(cliOptions?: Partial<CliOptions>): Readonly<McpSer
     process.env.NEW_RELIC_AI_MCP_STORAGE_PATH ??
     (typeof file.storagePath === 'string' ? file.storagePath : DEFAULT_STORAGE_PATH);
 
-  // N-10: highSecurity must be resolved before recordContent so it can override it
+  // highSecurity must be resolved before recordContent so it can override it
   const highSecurity = envBool(
     'NEW_RELIC_AI_HIGH_SECURITY',
     typeof file.highSecurity === 'boolean' ? file.highSecurity : false,
@@ -604,7 +620,7 @@ export function loadMcpConfig(cliOptions?: Partial<CliOptions>): Readonly<McpSer
 
     highSecurity,
 
-    // N-10: highSecurity forces recordContent off regardless of other settings
+    // highSecurity forces recordContent off regardless of other settings
     recordContent: highSecurity
       ? false
       : envBool(
@@ -870,6 +886,8 @@ export function loadMcpConfig(cliOptions?: Partial<CliOptions>): Readonly<McpSer
       };
     })(),
 
+    platformTarget: file.platformTarget as PlatformTarget | undefined,
+
     alerts: (() => {
       // The alerts config is a separate top-level block from
       // `personalAlertThresholds` (above) — they share the `alerts` key in
@@ -929,6 +947,17 @@ export function loadMcpConfig(cliOptions?: Partial<CliOptions>): Readonly<McpSer
         rulesPath,
       };
     })(),
+
+    antigravityPollingEnabled: envBool(
+      'NR_AI_ANTIGRAVITY_POLLING',
+      typeof file.antigravityPollingEnabled === 'boolean' ? file.antigravityPollingEnabled : true,
+    ),
+
+    antigravityPollIntervalMs: envInt(
+      'NR_AI_ANTIGRAVITY_POLL_MS',
+      typeof file.antigravityPollIntervalMs === 'number' ? file.antigravityPollIntervalMs : 30_000,
+      { min: 5_000, max: 300_000 },
+    ),
   };
 
   logger.debug('Configuration loaded', {

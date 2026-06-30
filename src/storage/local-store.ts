@@ -140,13 +140,37 @@ export class LocalStore {
   }
 
   /**
+   * Returns true if a live `active-<sessionId>.pid` heartbeat exists for the
+   * given session ID and the recorded PID is still a running process.
+   *
+   * Used by `drainAllBuffers()` and `gcOrphanBuffers()` to detect sessions
+   * that are actively owned by a --stdio MCP process.
+   */
+  private isSessionHeartbeatAlive(sessionId: string): boolean {
+    const heartbeatPath = resolve(this.storagePath, `active-${sessionId}.pid`);
+    if (!existsSync(heartbeatPath)) return false;
+    try {
+      const pid = Number.parseInt(readFileSync(heartbeatPath, 'utf-8').trim(), 10);
+      return isPidAlive(pid);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Drain every per-session buffer file under the storage path. Used by
    * `--local` standalone mode where the dashboard owner sees all live
    * sessions' events. Each file is drained atomically (rename-then-read) so a
    * concurrent writer for that session can't lose events; orphan files (whose
    * MCP isn't running) are picked up too.
+   *
+   * When `skipActiveHeartbeats` is true, buffers that have a live
+   * `active-<sessionId>.pid` heartbeat are skipped. This prevents `--local`
+   * from racing with a `--stdio` MCP that owns the session — the `--stdio`
+   * session drains its own buffer and computes full analytics; `--local` reads
+   * the rich persisted session file after the MCP exits.
    */
-  drainAllBuffers(): HookEvent[] {
+  drainAllBuffers(options?: { skipActiveHeartbeats?: boolean }): HookEvent[] {
     const all: HookEvent[] = [];
     let entries: string[];
     try {
@@ -161,6 +185,17 @@ export class LocalStore {
       // buffer.jsonl so a freshly-upgraded user's pre-Fix-3 events still flow.
       if (!name.endsWith('.jsonl')) continue;
       if (name !== 'buffer.jsonl' && !name.startsWith('buffer-')) continue;
+
+      // If requested, skip buffers owned by a live --stdio MCP session so that
+      // session can drain its own events and compute full analytics uncontested.
+      if (options?.skipActiveHeartbeats && name.startsWith('buffer-')) {
+        const sessionId = name.slice('buffer-'.length, -'.jsonl'.length);
+        if (this.isSessionHeartbeatAlive(sessionId)) {
+          logger.debug('drainAllBuffers: skipping live --stdio session', { sessionId });
+          continue;
+        }
+      }
+
       const drained = this.drainPath(resolve(this.storagePath, name));
       if (drained.length > 0) {
         for (const event of drained) all.push(event);

@@ -5,7 +5,11 @@
 
 import { basename } from 'node:path';
 
-const DEFAULT_STALE_THRESHOLD_MS = 180_000; // 3 minutes
+// 30 minutes: long enough to survive developer idle time between tool calls;
+// short enough to prevent zombie sessions accumulating on the dashboard.
+// Raised from 3 minutes to prevent short agy --print sessions from being
+// GC'd before they can be observed in the Today page live session list.
+const DEFAULT_STALE_THRESHOLD_MS = 1_800_000;
 const MAX_CONCURRENCY_SAMPLES = 2880; // 24h at 30s intervals
 const SAMPLE_INTERVAL_MS = 30_000;
 
@@ -26,13 +30,18 @@ export class LiveSessionRegistry {
     this.staleThresholdMs = staleThresholdMs;
   }
 
-  touch(sessionId: string, cwd?: string): void {
+  touch(sessionId: string, cwd?: string, fallbackName?: string): void {
     this.lastActivity.set(sessionId, Date.now());
-    if (cwd && !this.sessionNames.has(sessionId)) {
-      const name = basename(cwd);
-      if (name.length > 0 && name !== '.' && name !== '..') {
-        this.sessionNames.set(sessionId, name);
-      }
+    const cwdName = cwd ? basename(cwd) : undefined;
+    const isRealName =
+      cwdName !== undefined && cwdName.length > 0 && cwdName !== '.' && cwdName !== '..';
+    const existing = this.sessionNames.get(sessionId);
+    // Always prefer a real directory name over a UUID fallback.
+    // Set on first touch, or upgrade from fallback to real name.
+    if (isRealName) {
+      this.sessionNames.set(sessionId, cwdName!);
+    } else if (!existing && fallbackName) {
+      this.sessionNames.set(sessionId, fallbackName);
     }
     const liveCount = this.getLiveSessions().length;
     if (liveCount > this.peakConcurrent) {

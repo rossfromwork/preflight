@@ -347,7 +347,7 @@ export function buildSessionSummary(sources: BuildSessionSummarySources): FullSe
     durationMs: now - sessionMetrics.sessionStartTime,
     toolCallCount: sessionMetrics.toolCallCount,
     developer,
-    model: costMetrics?.model ?? null,
+    model: sessionMetrics.platformModel ?? costMetrics?.model ?? null,
     toolBreakdown: { ...sessionMetrics.toolCallCountByTool },
     filesRead: [...allFilesRead].sort(),
     filesModified: [...allFilesModified].sort(),
@@ -374,6 +374,7 @@ export function buildSessionSummary(sources: BuildSessionSummarySources): FullSe
     userCorrections: 0,
     outcome: 'completed',
     timeline: timeline.length > 0 ? timeline : undefined,
+    ...(sessionMetrics.platform !== undefined && { platform: sessionMetrics.platform }),
   };
 }
 
@@ -386,7 +387,7 @@ function formatDate(date: Date): string {
 }
 
 /**
- * N-06: Explicitly extract known fields from a raw session JSON string rather
+ * Explicitly extract known fields from a raw session JSON string rather
  * than blindly casting JSON.parse output. Prevents untrusted keys from disk
  * being misinterpreted as typed properties.
  */

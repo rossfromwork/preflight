@@ -32,6 +32,12 @@ export interface HookEventProcessorOptions {
    * live session.
    */
   drainAllSessions?: boolean;
+  /**
+   * When true (and drainAllSessions is true), buffers that have a live
+   * active-<sessionId>.pid heartbeat are skipped so a --stdio MCP that owns
+   * that session can process its own events and compute rich analytics.
+   */
+  skipActiveHeartbeats?: boolean;
   onRecord: (record: ToolCallRecord) => void;
   onTokenEvent?: (event: TokenEvent) => void;
 }
@@ -45,6 +51,7 @@ export class HookEventProcessor {
   private readonly pollIntervalMs: number;
   private readonly orphanTimeoutMs: number;
   private drainAllSessions: boolean;
+  private readonly skipActiveHeartbeats: boolean;
   private readonly onRecord: (record: ToolCallRecord) => void;
   private readonly onTokenEvent: ((event: TokenEvent) => void) | null;
 
@@ -61,6 +68,7 @@ export class HookEventProcessor {
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     this.orphanTimeoutMs = options.orphanTimeoutMs ?? DEFAULT_ORPHAN_TIMEOUT_MS;
     this.drainAllSessions = options.drainAllSessions ?? false;
+    this.skipActiveHeartbeats = options.skipActiveHeartbeats ?? false;
     this.maxPendingEvents = options.maxPendingEvents ?? DEFAULT_MAX_PENDING;
     this.onRecord = options.onRecord;
     this.onTokenEvent = options.onTokenEvent ?? null;
@@ -186,7 +194,9 @@ export class HookEventProcessor {
   }
 
   private drainOnce(): HookEvent[] {
-    return this.drainAllSessions ? this.store.drainAllBuffers() : this.store.drainBuffer();
+    return this.drainAllSessions
+      ? this.store.drainAllBuffers({ skipActiveHeartbeats: this.skipActiveHeartbeats })
+      : this.store.drainBuffer();
   }
 
   private handlePreEvent(event: HookEvent): void {
@@ -240,6 +250,10 @@ export class HookEventProcessor {
     const preEvent = this.pending.get(key);
     this.pending.delete(key);
 
+    // Prefer pre-event platform (more authoritative) over post-event.
+    // Extracted before the if/else so it is accessible in both branches.
+    const platform = (preEvent?.platform ?? event.platform) as string | undefined;
+
     if (preEvent) {
       // Matched pair
       const toolFields = parseToolSpecificFields(
@@ -263,11 +277,23 @@ export class HookEventProcessor {
         ...(preEvent.permissionMode !== undefined && {
           permissionMode: preEvent.permissionMode as string,
         }),
+        ...(platform !== undefined && { platform }),
+        // session_name is set by Antigravity CLI normalisation as a short-UUID fallback
+        // when no workspace path (cwd) is available. Claude Code events don't set this.
+        ...(preEvent.session_name !== undefined && { session_name: preEvent.session_name }),
         ...toolFields,
       };
       this.emitRecord(record);
     } else {
-      // Orphaned post — no matching pre; use post-event's toolInput if present
+      // Orphaned post — no matching pre; use post-event's toolInput if present.
+      // Drop events where both tool name and input are unknown — these are
+      // synthetic model-response steps emitted by Antigravity CLI between tool
+      // calls (agy fires PostToolUse for every model turn, not just tool calls).
+      // They carry no actionable information and produce noise in dashboards.
+      if (event.tool === 'unknown' && event.toolInput === undefined) {
+        logger.debug('Dropping synthetic orphaned post (no tool name or input)', { key });
+        return;
+      }
       logger.debug('Orphaned post event — no matching pre', { tool: event.tool, key });
       const toolFields = parseToolSpecificFields(event.tool, event.toolInput, event.toolOutput);
       const record: ToolCallRecord = {
@@ -280,6 +306,7 @@ export class HookEventProcessor {
         success: event.success ?? true,
         ...(event.error !== undefined && { error: event.error as string }),
         ...(event.outputSize !== undefined && { outputSizeBytes: event.outputSize }),
+        ...(platform !== undefined && { platform }),
         ...toolFields,
       };
       this.emitRecord(record);

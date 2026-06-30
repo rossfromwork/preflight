@@ -277,7 +277,7 @@ describe('LocalStore', () => {
       expect(store.loadRecentSessions(7)).toEqual([]);
     });
 
-    it('rejects sessionId containing path traversal and writes no file (N-01)', () => {
+    it('rejects sessionId containing path traversal and writes no file', () => {
       const store = new LocalStore(tmpDir);
       store.initialize();
 
@@ -286,7 +286,7 @@ describe('LocalStore', () => {
       expect(readdirSync(resolve(tmpDir, 'sessions'))).toHaveLength(0);
     });
 
-    it('rejects sessionId containing a forward slash (N-01)', () => {
+    it('rejects sessionId containing a forward slash', () => {
       const store = new LocalStore(tmpDir);
       store.initialize();
 
@@ -295,7 +295,7 @@ describe('LocalStore', () => {
       expect(readdirSync(resolve(tmpDir, 'sessions'))).toHaveLength(0);
     });
 
-    it('accepts a valid UUID-style sessionId (N-01)', () => {
+    it('accepts a valid UUID-style sessionId', () => {
       const store = new LocalStore(tmpDir);
       store.initialize();
 
@@ -374,10 +374,10 @@ describe('LocalStore', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Fault injection (F-127)
+  // Fault injection
   // ---------------------------------------------------------------------------
 
-  describe('drainBuffer() fault injection (F-127)', () => {
+  describe('drainBuffer() fault injection', () => {
     it('returns [] and preserves .drain when .drain is unreadable; recovers on next poll', () => {
       if (process.getuid?.() === 0) {
         // Root bypasses file permission checks — this test is not meaningful as root
@@ -431,10 +431,10 @@ describe('LocalStore', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Directory permissions (M-03)
+  // Directory permissions
   // ---------------------------------------------------------------------------
 
-  describe('initialize() directory permissions (M-03)', () => {
+  describe('initialize() directory permissions', () => {
     it('creates all storage directories with mode 0o700', () => {
       // Use a fresh path that does not exist so initialize() creates everything
       const freshDir = resolve(tmpDir, 'fresh-store');
@@ -583,6 +583,44 @@ describe('LocalStore', () => {
       const drainAll = new LocalStore(tmpDir);
       const all = drainAll.drainAllBuffers();
       expect(all.map((e) => e.tool)).toEqual(['real']);
+    });
+
+    it('skipActiveHeartbeats: skips buffers with a live heartbeat PID', () => {
+      mkdirSync(tmpDir, { recursive: true });
+      // Write two session buffers
+      new LocalStore(tmpDir, 'sess-live').appendToBuffer(makeEvent({ tool: 'owned' }));
+      new LocalStore(tmpDir, 'sess-free').appendToBuffer(makeEvent({ tool: 'free' }));
+      // Write a heartbeat for sess-live using the current process PID (always alive)
+      writeFileSync(resolve(tmpDir, 'active-sess-live.pid'), String(process.pid));
+
+      const drainAll = new LocalStore(tmpDir);
+      const all = drainAll.drainAllBuffers({ skipActiveHeartbeats: true });
+
+      // Only the session without a live heartbeat should be drained
+      expect(all.map((e) => e.tool)).toEqual(['free']);
+      // The owned buffer should still exist (was skipped, not drained)
+      expect(existsSync(resolve(tmpDir, 'buffer-sess-live.jsonl'))).toBe(true);
+    });
+
+    it('skipActiveHeartbeats: drains buffers with stale/dead heartbeat PIDs', () => {
+      mkdirSync(tmpDir, { recursive: true });
+      new LocalStore(tmpDir, 'sess-dead').appendToBuffer(makeEvent({ tool: 'dead-owner' }));
+      // Write a heartbeat with PID 999999999 — extremely unlikely to be alive
+      writeFileSync(resolve(tmpDir, 'active-sess-dead.pid'), '999999999');
+
+      const drainAll = new LocalStore(tmpDir);
+      const all = drainAll.drainAllBuffers({ skipActiveHeartbeats: true });
+      expect(all.map((e) => e.tool)).toEqual(['dead-owner']);
+    });
+
+    it('skipActiveHeartbeats: false (default) drains all buffers regardless of heartbeats', () => {
+      mkdirSync(tmpDir, { recursive: true });
+      new LocalStore(tmpDir, 'sess-hb').appendToBuffer(makeEvent({ tool: 'with-heartbeat' }));
+      writeFileSync(resolve(tmpDir, 'active-sess-hb.pid'), String(process.pid));
+
+      const drainAll = new LocalStore(tmpDir);
+      const all = drainAll.drainAllBuffers(); // default: no option passed
+      expect(all.map((e) => e.tool)).toEqual(['with-heartbeat']);
     });
   });
 

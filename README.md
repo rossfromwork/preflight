@@ -1,3 +1,12 @@
+> [!WARNING]
+> **This is a fork of [newrelic-experimental/preflight](https://github.com/newrelic-experimental/preflight) maintained solely for demo and testing purposes.**
+>
+> Branch: `feature/antigravity-gemini-support` on [github.com/rossfromwork/preflight](https://github.com/rossfromwork/preflight)
+>
+> This fork adds **Antigravity CLI (`agy`) support** on top of the upstream codebase. It is **not intended for production use**. For the official, supported version of Preflight please use the upstream repo.
+
+---
+
 <div align="center">
   <img src="demo/preflight-logo.svg" alt="Preflight" width="96" height="96" />
   <h1>Preflight</h1>
@@ -102,6 +111,96 @@ Restart your AI tool — hooks and the MCP server load at session start. Every t
 
 **Claude Code** • **Cursor** • **Windsurf** • **GitHub Copilot** • **Zed** • **Continue.dev** • **Amazon Q Developer**
 
+> **This fork also supports: Antigravity CLI (`agy`)** — see [Antigravity CLI Setup](#antigravity-cli-agy-setup) below.
+
+---
+
+## Antigravity CLI (`agy`) Setup
+
+This fork adds native support for [Antigravity CLI](https://antigravity.google) alongside
+the existing Claude Code integration.
+
+### What's included
+
+- **Hook normalisation** — agy's `toolCall`-based hook payload is translated to Preflight's
+  canonical format; all 20 agy tool names map to canonical names (Bash, Read, Write, etc.)
+- **`AntigravityAdapter`** — platform adapter stamps all NR events with `platform: 'antigravity'`
+- **`AntigravityQuotaPoller`** — connects to the running agy language server to capture quota
+  snapshots, estimate token usage from credit deltas, and populate the model usage widget
+- **`preflight install --platform antigravity`** — one-command setup
+
+### Quick setup
+
+```bash
+# 1. Clone and build this fork
+git clone https://github.com/rossfromwork/preflight
+cd preflight
+git checkout feature/antigravity-gemini-support
+npm install && npm run build && npm link
+
+# 2. Wire into Antigravity CLI
+preflight install --platform antigravity
+
+# 3. Restart agy — verify inside agy with /hooks and /mcp
+```
+
+This writes two files:
+
+- **`~/.gemini/config/hooks.json`** — PreToolUse/PostToolUse hooks pointing at `preflight-collector`
+- **`~/.gemini/antigravity-cli/settings.json`** — registers `preflight --stdio` as an MCP server
+
+### Configure New Relic (optional)
+
+```bash
+preflight setup   # interactive wizard — choose "both" mode for local dashboard + NR
+```
+
+Or edit `~/.newrelic-preflight/config.json` directly:
+
+```json
+{
+  "mode": "both",
+  "licenseKey": "YOUR_INGEST_LICENSE_KEY_NRAL",
+  "accountId": "YOUR_ACCOUNT_ID",
+  "developer": "your-name"
+}
+```
+
+### Run the local dashboard
+
+```bash
+preflight --local
+# Dashboard at http://localhost:7777
+```
+
+The Today page model usage widget shows all available agy models (Gemini, GPT-OSS, Claude)
+within ~2 seconds of startup via the quota poller.
+
+### How it works
+
+```
+agy (Antigravity CLI)
+  │
+  ├─ PreToolUse / PostToolUse hooks → preflight-collector
+  │    └─> normalises agy toolCall format → writes buffer-<conversationId>.jsonl
+  │
+  ├─ AntigravityQuotaPoller (every 30s)
+  │    └─> calls agy language server GetUserStatus via Connect RPC
+  │         └─> quota snapshot → token estimates → model usage widget
+  │
+  └─ MCP connection (preflight --stdio, spawned by agy)
+       └─> computes efficiency scores, task detection, anti-patterns
+            └─> saved to ~/.newrelic-preflight/sessions/ on agy exit
+```
+
+### Known limitations
+
+| Issue                    | Detail                                                                                                                          |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| Short `--print` sessions | Tool calls may be consumed by `--local` before the MCP heartbeat is written (~4-5s). Interactive `agy` sessions are unaffected. |
+| GPT-OSS cost tracking    | GPT-OSS uses a separate quota pool; cost estimates show $0.                                                                     |
+| Model widget resets      | In-memory only; repopulates within ~2s when agy is active.                                                                      |
+
 ---
 
 ## Connect New Relic (optional)
@@ -160,13 +259,19 @@ preflight uninstall   # Remove hooks and MCP config from your AI tool
 
 Add `--project` to `install`/`uninstall` to scope changes to the current directory only.
 
+**WSL users:** `preflight setup` will ask which Claude Code you're running. You can also set it explicitly:
+
+- `--windows-cc` — Windows Claude Code (the desktop app); uses `wsl.exe` hooks and Windows paths
+- `--linux-cc` — Linux Claude Code installed via npm inside WSL
+
 ---
 
 ## Documentation
 
 - [**ADVANCED.md**](docs/ADVANCED.md) — Configuration, dashboards, alerts, Terraform
 - [**CONTRIBUTING.md**](CONTRIBUTING.md) — Development, testing, submitting PRs
-- [**SECURITY.md**](docs/SECURITY.md) — Security guidelines and best practices
+- [**SECURITY.md**](./SECURITY.md) — Security guidelines and best practices
+- [**PRIVACY.md**](./PRIVACY.md) — Data collection inventory and pre-cloud checklist
 
 ---
 

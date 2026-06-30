@@ -15,6 +15,9 @@ import {
   getTranscriptPath,
   getBufferPath,
   writePpidBreadcrumb,
+  isAntigravityPayload,
+  normalizeAntigravityInput,
+  AGY_TOOL_MAP,
 } from './collector-script.js';
 
 let stderrSpy: ReturnType<typeof jest.spyOn>;
@@ -273,7 +276,7 @@ describe('collector-script', () => {
       expect(event.isInterrupt).toBe(true);
     });
 
-    it('redacts sensitive information in error messages (F-017)', () => {
+    it('redacts sensitive information in error messages', () => {
       const errorWithToken = 'Authorization failed: Bearer eyJhbGciOiJIUzI1NiJ9.token.signature';
       processHook(makePostToolUseFailure({ error: errorWithToken }));
 
@@ -283,7 +286,7 @@ describe('collector-script', () => {
       expect(event.error).toContain('[REDACTED]');
     });
 
-    it('redacts API keys in error messages (F-017)', () => {
+    it('redacts API keys in error messages', () => {
       const errorWithApiKey = 'Failed: API_KEY = sk-1234567890abcdef';
       processHook(makePostToolUseFailure({ error: errorWithApiKey }));
 
@@ -391,6 +394,153 @@ describe('collector-script', () => {
     });
   });
 
+  describe('Antigravity CLI normalisation', () => {
+    describe('isAntigravityPayload()', () => {
+      it('returns true for valid agy payload', () => {
+        expect(isAntigravityPayload({ conversationId: 'abc-123', stepIdx: 0 })).toBe(true);
+      });
+
+      it('returns false when hook_event_name is present (Claude Code payload)', () => {
+        expect(
+          isAntigravityPayload({
+            conversationId: 'abc-123',
+            stepIdx: 0,
+            hook_event_name: 'PreToolUse',
+          }),
+        ).toBe(false);
+      });
+
+      it('returns false when stepIdx is negative (robustness guard)', () => {
+        expect(isAntigravityPayload({ conversationId: 'abc-123', stepIdx: -1 })).toBe(false);
+      });
+
+      it('returns false when conversationId is missing', () => {
+        expect(isAntigravityPayload({ stepIdx: 0 })).toBe(false);
+      });
+
+      it('returns false when stepIdx is not a number', () => {
+        expect(isAntigravityPayload({ conversationId: 'abc-123', stepIdx: 'zero' })).toBe(false);
+      });
+    });
+
+    describe('normalizeAntigravityInput()', () => {
+      const basePayload = {
+        toolCall: { name: 'view_file', args: { AbsolutePath: '/tmp/foo.ts' } },
+        stepIdx: 5,
+        conversationId: 'test-conv-id',
+        workspacePaths: ['/tmp/my-project'],
+        transcriptPath: '/tmp/transcript.jsonl',
+      };
+
+      it('maps view_file to Read and normalises AbsolutePath', () => {
+        const result = normalizeAntigravityInput(basePayload, ['node', 'script', 'pre-tool']);
+        expect(result.tool_name).toBe('Read');
+        expect((result.tool_input as Record<string, unknown>)?.file_path).toBe('/tmp/foo.ts');
+      });
+
+      it('sets hook_event_name to PreToolUse for pre-tool', () => {
+        const result = normalizeAntigravityInput(basePayload, ['node', 'script', 'pre-tool']);
+        expect(result.hook_event_name).toBe('PreToolUse');
+      });
+
+      it('sets hook_event_name to PostToolUse for post-tool with no error', () => {
+        const postPayload = {
+          stepIdx: 5,
+          error: '',
+          conversationId: 'test-conv-id',
+          workspacePaths: ['/tmp/my-project'],
+        };
+        const result = normalizeAntigravityInput(postPayload, ['node', 'script', 'post-tool']);
+        expect(result.hook_event_name).toBe('PostToolUse');
+      });
+
+      it('sets hook_event_name to PostToolUseFailure when error is present', () => {
+        const failPayload = {
+          stepIdx: 5,
+          error: 'exit status 1',
+          conversationId: 'test-conv-id',
+          workspacePaths: [],
+        };
+        const result = normalizeAntigravityInput(failPayload, ['node', 'script', 'post-tool']);
+        expect(result.hook_event_name).toBe('PostToolUseFailure');
+      });
+
+      it('uses conversationId as session_id and first workspacePath as cwd', () => {
+        const result = normalizeAntigravityInput(basePayload, ['node', 'script', 'pre-tool']);
+        expect(result.session_id).toBe('test-conv-id');
+        expect(result.cwd).toBe('/tmp/my-project');
+      });
+
+      it('sets session_name to first 8 chars of conversationId', () => {
+        const result = normalizeAntigravityInput(basePayload, ['node', 'script', 'pre-tool']);
+        expect(result.session_name).toBe('test-con');
+      });
+
+      it('maps run_command to Bash and normalises CommandLine', () => {
+        const payload = {
+          toolCall: { name: 'run_command', args: { CommandLine: 'npm test', Cwd: '/tmp' } },
+          stepIdx: 1,
+          conversationId: 'c',
+          workspacePaths: [],
+        };
+        const result = normalizeAntigravityInput(payload, ['node', 'script', 'pre-tool']);
+        expect(result.tool_name).toBe('Bash');
+        expect((result.tool_input as Record<string, unknown>)?.command).toBe('npm test');
+      });
+    });
+
+    describe('AGY_TOOL_MAP', () => {
+      it('maps all 20 agy tools to canonical names', () => {
+        expect(AGY_TOOL_MAP['run_command']).toBe('Bash');
+        expect(AGY_TOOL_MAP['view_file']).toBe('Read');
+        expect(AGY_TOOL_MAP['write_to_file']).toBe('Write');
+        expect(AGY_TOOL_MAP['replace_file_content']).toBe('Edit');
+        expect(AGY_TOOL_MAP['grep_search']).toBe('Grep');
+        expect(AGY_TOOL_MAP['find_by_name']).toBe('Glob');
+        expect(AGY_TOOL_MAP['search_web']).toBe('WebSearch');
+        expect(AGY_TOOL_MAP['invoke_subagent']).toBe('Agent');
+        expect(Object.keys(AGY_TOOL_MAP).length).toBeGreaterThanOrEqual(15);
+      });
+    });
+
+    describe('Antigravity PreToolUse — decision output + buffer write', () => {
+      it('writes {"decision":"allow"} to stdout for agy PreToolUse', () => {
+        process.env.NEW_RELIC_AI_MCP_STORAGE_PATH = tmpDir;
+        const stdoutSpy = jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
+
+        processHook(
+          JSON.stringify({
+            toolCall: { name: 'list_dir', args: { DirectoryPath: '/tmp' } },
+            stepIdx: 1,
+            conversationId: 'decision-test',
+            workspacePaths: ['/tmp'],
+          }),
+          ['node', 'script', 'pre-tool'],
+        );
+
+        expect(stdoutSpy).toHaveBeenCalledWith(expect.stringContaining('"decision":"allow"'));
+        stdoutSpy.mockRestore();
+      });
+
+      it('does not write to stdout for Claude Code PreToolUse', () => {
+        process.env.NEW_RELIC_AI_MCP_STORAGE_PATH = tmpDir;
+        const stdoutSpy = jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
+
+        processHook(
+          JSON.stringify({
+            hook_event_name: 'PreToolUse',
+            tool_name: 'Bash',
+            tool_input: { command: 'ls' },
+            session_id: 'claude-sess',
+          }),
+        );
+
+        expect(stdoutSpy).not.toHaveBeenCalled();
+        stdoutSpy.mockRestore();
+      });
+    });
+  });
+
   describe('helper functions', () => {
     it('redact() replaces API keys', () => {
       expect(redact('API_KEY = my-secret-key')).toContain('[REDACTED]');
@@ -449,26 +599,26 @@ describe('collector-script', () => {
       expect(result).toBe('hello...[truncated]');
     });
 
-    // N-02: ReDoS protection
-    it('redact() truncates input over 1 MB before applying patterns (N-02)', () => {
+    // ReDoS protection
+    it('redact() truncates input over 1 MB before applying patterns', () => {
       const overLimit = 'A'.repeat(1_048_577);
       const result = redact(overLimit);
       expect(result.length).toBeLessThanOrEqual(1_048_576);
     });
 
-    it('redact() does not match an unterminated PEM block — bounded pattern prevents ReDoS (N-02)', () => {
+    it('redact() does not match an unterminated PEM block — bounded pattern prevents ReDoS', () => {
       const input = '-----BEGIN RSA PRIVATE KEY-----' + 'B'.repeat(200);
       expect(redact(input)).toBe(input);
     });
 
-    describe('getRecordContent() — enforcing highSecurity (F-015)', () => {
+    describe('getRecordContent() — enforcing highSecurity', () => {
       beforeEach(() => {
-        delete process.env.NEW_RELIC_AI_MCP_HIGH_SECURITY;
+        delete process.env.NEW_RELIC_AI_HIGH_SECURITY;
         delete process.env.NEW_RELIC_AI_MCP_RECORD_CONTENT;
       });
 
-      it('returns false when NEW_RELIC_AI_MCP_HIGH_SECURITY env var is set', () => {
-        process.env.NEW_RELIC_AI_MCP_HIGH_SECURITY = 'true';
+      it('returns false when NEW_RELIC_AI_HIGH_SECURITY env var is set', () => {
+        process.env.NEW_RELIC_AI_HIGH_SECURITY = 'true';
         process.env.NEW_RELIC_AI_MCP_RECORD_CONTENT = 'true';
 
         expect(getRecordContent()).toBe(false);
@@ -486,7 +636,7 @@ describe('collector-script', () => {
     });
   });
 
-  describe('file permissions (M-03)', () => {
+  describe('file permissions', () => {
     it('creates the buffer directory with mode 0o700', () => {
       // Point to a subdirectory that does not yet exist so mkdirSync is triggered
       const subDir = resolve(tmpDir, 'new-subdir');

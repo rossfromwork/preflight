@@ -236,12 +236,14 @@ describe('PlatformRegistry', () => {
       expect(detected!.platformName).toBe('amazon-q');
     });
 
-    it('falls back to generic-mcp when no specific platform detected', () => {
+    it('falls back to generic-mcp or antigravity when no specific platform detected', () => {
+      // On machines with ~/.gemini/antigravity-cli/ installed, AntigravityAdapter
+      // returns true from isSupported() and is detected before generic-mcp.
       const registry = createDefaultRegistry();
 
       const detected = registry.detect();
       expect(detected).not.toBeNull();
-      expect(detected!.platformName).toBe('generic-mcp');
+      expect(['generic-mcp', 'antigravity']).toContain(detected!.platformName);
     });
 
     it('prioritizes Cursor over Windsurf when both are present', () => {
@@ -294,7 +296,7 @@ describe('createDefaultRegistry', () => {
     const registry = createDefaultRegistry();
     const registered = registry.getRegistered();
 
-    expect(registered).toHaveLength(8);
+    expect(registered).toHaveLength(9); // 8 upstream adapters + AntigravityAdapter
     expect(registered[0]).toBeInstanceOf(ClaudeCodeAdapter);
     expect(registered[1]).toBeInstanceOf(CursorAdapter);
     expect(registered[2]).toBeInstanceOf(WindsurfAdapter);
@@ -302,7 +304,9 @@ describe('createDefaultRegistry', () => {
     expect(registered[4]).toBeInstanceOf(ZedAdapter);
     expect(registered[5]).toBeInstanceOf(ContinueAdapter);
     expect(registered[6]).toBeInstanceOf(AmazonQAdapter);
-    expect(registered[7]).toBeInstanceOf(GenericMcpAdapter);
+    // AntigravityAdapter added in this fork — sits before the generic fallback
+    expect(registered[7]!.platformName).toBe('antigravity');
+    expect(registered[8]).toBeInstanceOf(GenericMcpAdapter);
   });
 
   it('includes zed, continue, and amazon-q adapters', () => {
