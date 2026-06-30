@@ -1476,6 +1476,14 @@ async function main(): Promise<void> {
     persistSession = () => {
       if (!sessionStore || !sessionTracker || !taskDetector || !config) return;
       try {
+        // Flush any in-progress task before building the summary. The idle
+        // timeout (default 20s) may not have fired if the session ended quickly
+        // (e.g. agy sends SIGHUP immediately after the last tool call).
+        taskDetector.dispose();
+        for (const task of taskDetector.drainNewlyCompletedTasks()) {
+          const { patterns } = antiPatternDetector.analyze(task.toolCalls);
+          efficiencyScorer.computeScore(task, patterns);
+        }
         const summary = buildSessionSummary({
           sessionTracker,
           costTracker,
