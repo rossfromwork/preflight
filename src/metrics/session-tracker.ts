@@ -348,5 +348,7 @@ export class SessionTracker {
     this.bashCallsByCategory.clear();
     this.timeline = [];
     this.timelineEntryCount = 0;
+    this.platform = undefined;
+    this.platformModel = undefined;
   }
 }

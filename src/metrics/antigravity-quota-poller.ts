@@ -58,8 +58,10 @@ interface AgyProcessInfo {
 // ---------------------------------------------------------------------------
 
 // Heuristic average tokens per Gemini prompt credit (one "turn").
-// A credit covers one user→model→response round trip. These defaults
-// are conservative estimates; users can override via config.
+// One credit covers one user→model→response round trip. Average turn sizes
+// vary widely (short questions vs. multi-file codegen). These defaults are
+// intentionally conservative to avoid over-reporting cost — better to show
+// a slight underestimate than a surprise overage. Tune in config if needed.
 const DEFAULT_AVG_INPUT_TOKENS_PER_CREDIT = 1_500;
 const DEFAULT_AVG_OUTPUT_TOKENS_PER_CREDIT = 400;
 

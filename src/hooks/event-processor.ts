@@ -250,6 +250,10 @@ export class HookEventProcessor {
     const preEvent = this.pending.get(key);
     this.pending.delete(key);
 
+    // Prefer pre-event platform (more authoritative) over post-event.
+    // Extracted before the if/else so it is accessible in both branches.
+    const platform = (preEvent?.platform ?? event.platform) as string | undefined;
+
     if (preEvent) {
       // Matched pair
       const toolFields = parseToolSpecificFields(
@@ -257,7 +261,6 @@ export class HookEventProcessor {
         preEvent.toolInput,
         event.toolOutput,
       );
-      const platform = (preEvent.platform ?? event.platform) as string | undefined;
       const record: ToolCallRecord = {
         id: randomUUID(),
         sessionId: (preEvent.sessionId as string) ?? (event.sessionId as string) ?? null,
@@ -275,6 +278,8 @@ export class HookEventProcessor {
           permissionMode: preEvent.permissionMode as string,
         }),
         ...(platform !== undefined && { platform }),
+        // session_name is set by Antigravity CLI normalisation as a short-UUID fallback
+        // when no workspace path (cwd) is available. Claude Code events don't set this.
         ...(preEvent.session_name !== undefined && { session_name: preEvent.session_name }),
         ...toolFields,
       };
@@ -291,7 +296,6 @@ export class HookEventProcessor {
       }
       logger.debug('Orphaned post event — no matching pre', { tool: event.tool, key });
       const toolFields = parseToolSpecificFields(event.tool, event.toolInput, event.toolOutput);
-      const orphanPlatform = event.platform as string | undefined;
       const record: ToolCallRecord = {
         id: randomUUID(),
         sessionId: (event.sessionId as string) ?? null,
@@ -302,7 +306,7 @@ export class HookEventProcessor {
         success: event.success ?? true,
         ...(event.error !== undefined && { error: event.error as string }),
         ...(event.outputSize !== undefined && { outputSizeBytes: event.outputSize }),
-        ...(orphanPlatform !== undefined && { platform: orphanPlatform }),
+        ...(platform !== undefined && { platform }),
         ...toolFields,
       };
       this.emitRecord(record);

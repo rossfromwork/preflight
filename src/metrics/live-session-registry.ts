@@ -5,7 +5,11 @@
 
 import { basename } from 'node:path';
 
-const DEFAULT_STALE_THRESHOLD_MS = 1_800_000; // 30 minutes
+// 30 minutes: long enough to survive developer idle time between tool calls;
+// short enough to prevent zombie sessions accumulating on the dashboard.
+// Raised from 3 minutes to prevent short agy --print sessions from being
+// GC'd before they can be observed in the Today page live session list.
+const DEFAULT_STALE_THRESHOLD_MS = 1_800_000;
 const MAX_CONCURRENCY_SAMPLES = 2880; // 24h at 30s intervals
 const SAMPLE_INTERVAL_MS = 30_000;
 

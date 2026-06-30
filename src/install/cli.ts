@@ -281,10 +281,6 @@ function handleSchedule(options: { time?: string; disable?: boolean }): void {
 // Antigravity install handler
 // ---------------------------------------------------------------------------
 
-const AGY_GEMINI_DIR = resolve(homedir(), '.gemini');
-const AGY_HOOKS_PATH = resolve(AGY_GEMINI_DIR, 'config', 'hooks.json');
-const AGY_SETTINGS_PATH = resolve(AGY_GEMINI_DIR, 'antigravity-cli', 'settings.json');
-
 function resolveCollectorBinaryPath(): string | null {
   try {
     const raw = execSync('which preflight-collector', { stdio: 'pipe' }).toString().trim();
@@ -297,12 +293,17 @@ function resolveCollectorBinaryPath(): string | null {
 function handleAntigravityInstall(options: { licenseKey?: string; accountId?: string }): void {
   migrateStoragePath(true);
 
+  // Paths scoped here — only used by this handler, not shared across the module.
+  const agyGeminiDir = resolve(homedir(), '.gemini');
+  const agyHooksPath = resolve(agyGeminiDir, 'config', 'hooks.json');
+  const agySettingsPath = resolve(agyGeminiDir, 'antigravity-cli', 'settings.json');
+
   const collectorPath = resolveCollectorBinaryPath();
   const preCmd = collectorPath ? `"${collectorPath}" pre-tool` : 'preflight-collector pre-tool';
   const postCmd = collectorPath ? `"${collectorPath}" post-tool` : 'preflight-collector post-tool';
 
   // 1. Write ~/.gemini/config/hooks.json (named-hook format required by agy)
-  const existingHooks = readJsonFile(AGY_HOOKS_PATH);
+  const existingHooks = readJsonFile(agyHooksPath);
   const mergedHooks = {
     ...existingHooks,
     preflight: {
@@ -310,14 +311,14 @@ function handleAntigravityInstall(options: { licenseKey?: string; accountId?: st
       PostToolUse: [{ matcher: '', hooks: [{ type: 'command', command: postCmd }] }],
     },
   };
-  writeJsonFile(AGY_HOOKS_PATH, mergedHooks);
-  print(`\n✓ Antigravity hooks written: ${AGY_HOOKS_PATH}`);
+  writeJsonFile(agyHooksPath, mergedHooks);
+  print(`\n✓ Antigravity hooks written: ${agyHooksPath}`);
   print('  - Added PreToolUse and PostToolUse hooks');
 
   // 2. Merge MCP server into ~/.gemini/antigravity-cli/settings.json
   const binPath = resolveBinaryPath();
   const mcpCommand = binPath ?? 'preflight';
-  const existingSettings = readJsonFile(AGY_SETTINGS_PATH);
+  const existingSettings = readJsonFile(agySettingsPath);
   const existingMcpServers =
     typeof existingSettings.mcpServers === 'object' && existingSettings.mcpServers !== null
       ? (existingSettings.mcpServers as Record<string, unknown>)
@@ -329,8 +330,8 @@ function handleAntigravityInstall(options: { licenseKey?: string; accountId?: st
       preflight: { command: mcpCommand, args: ['--stdio'] },
     },
   };
-  writeJsonFile(AGY_SETTINGS_PATH, mergedSettings);
-  print(`✓ MCP server registered: ${AGY_SETTINGS_PATH}`);
+  writeJsonFile(agySettingsPath, mergedSettings);
+  print(`✓ MCP server registered: ${agySettingsPath}`);
   print('  - Added preflight MCP server under mcpServers');
 
   // 3. Optionally write NR config

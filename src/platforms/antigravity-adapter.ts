@@ -23,6 +23,20 @@ interface AgyToolCallEvent {
   [key: string]: unknown;
 }
 
+/**
+ * Platform adapter for Antigravity CLI (agy).
+ *
+ * Integration model:
+ *   - **Hooks** (`~/.gemini/config/hooks.json`): PreToolUse/PostToolUse handlers
+ *     invoke `preflight-collector` on every tool call. The collector normalises
+ *     agy's toolCall-based payload into Preflight's canonical format and writes
+ *     to the per-session buffer file.
+ *   - **MCP server** (`~/.gemini/antigravity-cli/settings.json`): agy spawns
+ *     `preflight --stdio` as a child process, providing live session analytics
+ *     via the `nr_observe_*` tool suite.
+ *
+ * Configure both with: `preflight install --platform antigravity`
+ */
 export class AntigravityAdapter implements PlatformAdapter {
   readonly platformName = 'antigravity';
 

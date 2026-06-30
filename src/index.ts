@@ -582,9 +582,11 @@ async function main(): Promise<void> {
   };
   process.on('SIGINT', handleSignal);
   process.on('SIGTERM', handleSignal);
-  // SIGHUP: sent when the parent process (e.g. agy) exits while the MCP
-  // server is still running. Without this handler Node.js terminates
-  // immediately, skipping persistSession() and losing rich analytics.
+  // SIGHUP: sent when a parent process (e.g. agy) terminates its child MCP server.
+  // Without an explicit handler, Node.js exits immediately on SIGHUP without
+  // running any registered signal/exit handlers — persistSession() and shutdown
+  // cleanup are skipped, losing all in-session analytics. Treat it identically
+  // to SIGINT/SIGTERM so graceful shutdown always runs.
   process.on('SIGHUP', handleSignal);
 
   if (options.stdio || options.local) {
@@ -1166,6 +1168,10 @@ async function main(): Promise<void> {
           // available Antigravity models (including GPT-OSS at 100% quota which
           // never generates a delta since it uses a separate quota pool).
           if (!delta) {
+            // Register all resolved models with zero usage on the baseline poll so
+            // they appear in the Today page model widget immediately on dashboard
+            // startup. GPT-OSS and other non-Gemini models use separate quota pools
+            // and never generate deltas — without this they would never show.
             for (const m of snapshot.models) {
               const modelKey = m.resolvedModelId;
               if (modelKey) modelUsageTracker.recordUsage(modelKey, 0, 0, 0);
@@ -1240,7 +1246,7 @@ async function main(): Promise<void> {
       drainAllSessions: !options.stdio || isProvisional,
       // In --local mode, skip buffers owned by a live --stdio MCP session so
       // that session can compute full analytics without racing for its events.
-      skipActiveHeartbeats: options.local === true,
+      skipActiveHeartbeats: options.local,
       onRecord: (record) => {
         if (!config || !sessionTracker || !taskDetector) {
           logger.warn('onRecord called before full initialization; skipping');

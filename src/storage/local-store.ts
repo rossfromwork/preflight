@@ -140,6 +140,24 @@ export class LocalStore {
   }
 
   /**
+   * Returns true if a live `active-<sessionId>.pid` heartbeat exists for the
+   * given session ID and the recorded PID is still a running process.
+   *
+   * Used by `drainAllBuffers()` and `gcOrphanBuffers()` to detect sessions
+   * that are actively owned by a --stdio MCP process.
+   */
+  private isSessionHeartbeatAlive(sessionId: string): boolean {
+    const heartbeatPath = resolve(this.storagePath, `active-${sessionId}.pid`);
+    if (!existsSync(heartbeatPath)) return false;
+    try {
+      const pid = Number.parseInt(readFileSync(heartbeatPath, 'utf-8').trim(), 10);
+      return isPidAlive(pid);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Drain every per-session buffer file under the storage path. Used by
    * `--local` standalone mode where the dashboard owner sees all live
    * sessions' events. Each file is drained atomically (rename-then-read) so a
@@ -168,20 +186,13 @@ export class LocalStore {
       if (!name.endsWith('.jsonl')) continue;
       if (name !== 'buffer.jsonl' && !name.startsWith('buffer-')) continue;
 
-      // If requested, skip buffers owned by a live --stdio MCP session.
+      // If requested, skip buffers owned by a live --stdio MCP session so that
+      // session can drain its own events and compute full analytics uncontested.
       if (options?.skipActiveHeartbeats && name.startsWith('buffer-')) {
         const sessionId = name.slice('buffer-'.length, -'.jsonl'.length);
-        const heartbeatPath = resolve(this.storagePath, `active-${sessionId}.pid`);
-        if (existsSync(heartbeatPath)) {
-          try {
-            const pid = Number.parseInt(readFileSync(heartbeatPath, 'utf-8').trim(), 10);
-            if (isPidAlive(pid)) {
-              logger.debug('drainAllBuffers: skipping live --stdio session', { sessionId, pid });
-              continue;
-            }
-          } catch {
-            // Unreadable heartbeat — drain as normal (treat as orphan)
-          }
+        if (this.isSessionHeartbeatAlive(sessionId)) {
+          logger.debug('drainAllBuffers: skipping live --stdio session', { sessionId });
+          continue;
         }
       }
 

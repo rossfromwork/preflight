@@ -437,11 +437,13 @@ const AGY_TOOL_MAP: Record<string, string> = {
 };
 
 function isAntigravityPayload(data: Record<string, unknown>): boolean {
-  // Antigravity payloads always carry conversationId + stepIdx.
+  // Antigravity payloads always carry conversationId + a non-negative stepIdx.
   // Claude Code payloads always carry hook_event_name instead.
+  // The stepIdx >= 0 guard prevents false-positives from malformed payloads.
   return (
     typeof data.conversationId === 'string' &&
     typeof data.stepIdx === 'number' &&
+    data.stepIdx >= 0 &&
     data.hook_event_name === undefined
   );
 }
@@ -490,6 +492,9 @@ function normalizeAntigravityInput(data: Record<string, unknown>, argv: string[]
     cwd: Array.isArray(data.workspacePaths) ? (data.workspacePaths[0] as string) : undefined,
     transcript_path: typeof data.transcriptPath === 'string' ? data.transcriptPath : undefined,
     error: errorStr,
+    // _platform: internal marker written to the buffer event to indicate the source
+    // platform. Prefixed with _ to distinguish it from external hook input fields
+    // and prevent accidental collisions with Claude Code's hook schema.
     _platform: 'antigravity',
     // Short conversationId as session name fallback when no workspace path is set
     session_name:

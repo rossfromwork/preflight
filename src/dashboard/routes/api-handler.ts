@@ -107,6 +107,19 @@ function aggregateQualityFromHistory(sessions: unknown[]): {
   };
 }
 
+/**
+ * Safely extract the `platformModel` field from a live session metrics object.
+ * SessionTracker.getMetrics() returns an opaque type here; using a type guard
+ * avoids the unsafe `as { platformModel?: string }` cast.
+ */
+function extractPlatformModel(obj: unknown): string | undefined {
+  if (obj !== null && typeof obj === 'object' && 'platformModel' in obj) {
+    const val = (obj as Record<string, unknown>).platformModel;
+    return typeof val === 'string' ? val : undefined;
+  }
+  return undefined;
+}
+
 interface RawAuditRecord {
   readonly timestamp: number;
   readonly sessionId: string | null;
@@ -657,10 +670,7 @@ export function createApiHandler(
           toolCallCount: live.toolCallCount,
           estimatedCostUsd: deps.costTracker?.getMetrics().sessionTotalCostUsd ?? null,
           ...(live.platform !== undefined && { platform: live.platform }),
-          model:
-            (live as { platformModel?: string }).platformModel ??
-            deps.costTracker?.getMetrics().model ??
-            null,
+          model: extractPlatformModel(live) ?? deps.costTracker?.getMetrics().model ?? null,
         });
       }
     }
