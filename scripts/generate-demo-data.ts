@@ -3,18 +3,26 @@
  * Demo data generator for Preflight.
  *
  * Produces realistic multi-day, multi-platform session data without using
- * any real AI tokens. Writes session files to the Preflight storage directory
- * and injects live buffer events for one "in-progress" session so the Today
- * page shows a mix of completed and live activity.
+ * any real AI tokens. Includes git activity, high-cost sessions, and a live
+ * simulation mode that keeps writing buffer events while running.
  *
  * Usage:
- *   npx tsx scripts/generate-demo-data.ts
- *   npx tsx scripts/generate-demo-data.ts --developer alice_smith
- *   npx tsx scripts/generate-demo-data.ts --clear        # remove demo data only
- *   npx tsx scripts/generate-demo-data.ts --days 5       # sessions across 5 days
+ *   npm run demo-data                         # generate historical sessions
+ *   npm run demo-data -- --live              # live simulation (Ctrl+C to stop)
+ *   npm run demo-data -- --developer alice   # custom developer name
+ *   npm run demo-data -- --days 5            # more days of history
+ *   npm run demo-data -- --clear             # remove all demo data
  */
 
-import { writeFileSync, mkdirSync, existsSync, readdirSync, unlinkSync } from 'node:fs';
+import {
+  writeFileSync,
+  appendFileSync,
+  mkdirSync,
+  existsSync,
+  readdirSync,
+  unlinkSync,
+  readFileSync,
+} from 'node:fs';
 import { resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -35,7 +43,9 @@ const SESSIONS_DIR = resolve(STORAGE_PATH, 'sessions');
 const DEVELOPER = opt('--developer', process.env.USER ?? 'demo_user');
 const DAYS_BACK = parseInt(opt('--days', '3'), 10);
 const CLEAR_ONLY = flag('--clear');
-const DEMO_TAG = 'DEMO_GENERATED'; // marker in sessionName for cleanup
+const LIVE_MODE = flag('--live');
+const LIVE_DURATION_S = parseInt(opt('--duration', '300'), 10); // 5 min default
+const DEMO_TAG = 'DEMO_GENERATED';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -65,6 +75,41 @@ function pick<T>(arr: T[]): T {
 }
 
 // ---------------------------------------------------------------------------
+// Data pools
+// ---------------------------------------------------------------------------
+
+const PROJECT_FILES = [
+  'src/components/Dashboard.tsx',
+  'src/hooks/useMetrics.ts',
+  'src/api/client.ts',
+  'src/utils/formatter.ts',
+  'src/pages/Overview.tsx',
+  'src/services/alerts.ts',
+  'src/models/session.ts',
+  'tests/dashboard.test.ts',
+  'tests/api.test.ts',
+  'terraform/main.tf',
+  'terraform/variables.tf',
+  'src/lib/nr-client.ts',
+  'src/lib/telemetry.ts',
+];
+
+const GIT_COMMANDS = [
+  'git commit -m "feat: add monitoring dashboard components"',
+  'git commit -m "fix: resolve API authentication timeout"',
+  'git commit -m "refactor: extract shared telemetry utilities"',
+  'git commit -m "test: add coverage for alert service"',
+  'git push origin feature/monitoring-v2',
+  'git push origin main',
+  'git pull origin main',
+  'git checkout -b feature/perf-improvements',
+  'git diff HEAD~1 --stat',
+  'git log --oneline -10',
+  'git stash',
+  'git stash pop',
+];
+
+// ---------------------------------------------------------------------------
 // Session builder
 // ---------------------------------------------------------------------------
 
@@ -82,6 +127,7 @@ interface SessionSpec {
   tokensOutput: number;
   linesAdded: number;
   linesRemoved: number;
+  gitCommands?: number; // number of git commands in this session
   antiPatterns?: Array<{ type: string; count: number }>;
   testRunCount?: number;
   testPassCount?: number;
@@ -90,24 +136,6 @@ interface SessionSpec {
   taskCount?: number;
   repoName?: string;
 }
-
-const PROJECT_FILES = [
-  'src/components/Dashboard.tsx',
-  'src/hooks/useMetrics.ts',
-  'src/api/client.ts',
-  'src/utils/formatter.ts',
-  'src/pages/Overview.tsx',
-  'tests/dashboard.test.ts',
-  'tests/api.test.ts',
-  'src/config/settings.ts',
-  'src/services/alerts.ts',
-  'src/models/session.ts',
-  'terraform/main.tf',
-  'terraform/variables.tf',
-  '.github/workflows/ci.yml',
-  'src/lib/nr-client.ts',
-  'src/lib/telemetry.ts',
-];
 
 function buildTimeline(
   spec: SessionSpec,
@@ -127,6 +155,12 @@ function buildTimeline(
   const totalCalls = Object.values(spec.toolBreakdown).reduce((a, b) => a + b, 0);
   const durationPerCall = (spec.durationMin * 60000) / totalCalls;
 
+  // Inject git commands into Bash calls
+  let gitSlots = spec.gitCommands ?? 0;
+  const bashCount = spec.toolBreakdown['Bash'] ?? 0;
+  const gitPerBash = bashCount > 0 ? gitSlots / bashCount : 0;
+  let gitAccum = 0;
+
   for (const [tool, count] of Object.entries(spec.toolBreakdown)) {
     for (let i = 0; i < count; i++) {
       const dur = randInt(50, 3500);
@@ -134,16 +168,32 @@ function buildTimeline(
         timestamp: ts,
         toolName: tool,
         durationMs: dur,
-        success: Math.random() > 0.05,
+        success: Math.random() > 0.04,
       };
       if (tool === 'Read' || tool === 'Write' || tool === 'Edit') {
         entry.filePath = pick(PROJECT_FILES);
       }
       if (tool === 'Bash') {
-        const cmds = ['npm test', 'npm run build', 'git status', 'terraform plan', 'grep -r'];
-        entry.command = pick(cmds);
-        entry.isTestCommand = entry.command === 'npm test';
-        entry.isBuildCommand = entry.command === 'npm run build';
+        gitAccum += gitPerBash;
+        if (gitAccum >= 1 && gitSlots > 0) {
+          // This bash call is a git command
+          entry.command = pick(GIT_COMMANDS);
+          gitAccum -= 1;
+          gitSlots--;
+        } else {
+          const cmds = [
+            'npm test',
+            'npm run build',
+            'npm run lint',
+            'terraform plan',
+            'terraform apply -auto-approve',
+            'grep -rn "TODO" src/',
+            'find src -name "*.ts" | wc -l',
+          ];
+          entry.command = pick(cmds);
+          entry.isTestCommand = entry.command.startsWith('npm test');
+          entry.isBuildCommand = entry.command === 'npm run build';
+        }
       }
       entries.push(entry);
       ts += durationPerCall + randInt(-500, 500);
@@ -216,7 +266,7 @@ function buildSession(spec: SessionSpec): [string, string, object] {
 }
 
 // ---------------------------------------------------------------------------
-// Session definitions — the "story" for the demo
+// Session definitions
 // ---------------------------------------------------------------------------
 
 const SESSION_SPECS: SessionSpec[] = [
@@ -235,6 +285,7 @@ const SESSION_SPECS: SessionSpec[] = [
     tokensOutput: 12000,
     linesAdded: 184,
     linesRemoved: 67,
+    gitCommands: 3,
     testRunCount: 3,
     testPassCount: 3,
     buildRunCount: 2,
@@ -243,23 +294,28 @@ const SESSION_SPECS: SessionSpec[] = [
     repoName: 'nr-auth-service',
   },
   {
-    name: 'dashboard-api-design',
+    // HIGH COST: Opus doing complex architecture work
+    name: 'platform-architecture-redesign',
     platform: 'claude-code',
     model: 'claude-opus-4-6',
     startDaysAgo: 2,
-    startHour: 11,
-    durationMin: 68,
-    toolBreakdown: { Read: 12, Write: 8, Edit: 4, Bash: 4, Agent: 2 },
-    efficiencyScore: 0.85,
-    estimatedCostUsd: 5.2,
-    tokensInput: 120000,
-    tokensOutput: 28000,
-    linesAdded: 312,
-    linesRemoved: 45,
-    testRunCount: 2,
-    testPassCount: 2,
-    taskCount: 2,
-    repoName: 'nr-dashboard',
+    startHour: 10,
+    durationMin: 280,
+    toolBreakdown: { Read: 48, Write: 22, Edit: 18, Bash: 14, Agent: 6, Grep: 12 },
+    efficiencyScore: 0.72,
+    estimatedCostUsd: 187.4,
+    tokensInput: 4200000,
+    tokensOutput: 980000,
+    linesAdded: 1240,
+    linesRemoved: 380,
+    gitCommands: 8,
+    testRunCount: 6,
+    testPassCount: 5,
+    buildRunCount: 4,
+    buildPassCount: 4,
+    taskCount: 8,
+    repoName: 'nr-platform-core',
+    antiPatterns: [{ type: 'thrashing_reads', count: 4 }],
   },
   {
     name: 'infra-cost-analysis',
@@ -275,6 +331,7 @@ const SESSION_SPECS: SessionSpec[] = [
     tokensOutput: 8000,
     linesAdded: 0,
     linesRemoved: 0,
+    gitCommands: 2,
     taskCount: 1,
     repoName: 'nr-infra',
   },
@@ -287,13 +344,14 @@ const SESSION_SPECS: SessionSpec[] = [
     startDaysAgo: 1,
     startHour: 9,
     durationMin: 38,
-    toolBreakdown: { Read: 6, Write: 10, Edit: 8, Bash: 4 },
+    toolBreakdown: { Read: 6, Write: 10, Edit: 8, Bash: 6 },
     efficiencyScore: 0.72,
     estimatedCostUsd: 0.62,
     tokensInput: 32000,
     tokensOutput: 10000,
     linesAdded: 220,
     linesRemoved: 18,
+    gitCommands: 4,
     antiPatterns: [{ type: 'blind_edit', count: 1 }],
     buildRunCount: 3,
     buildPassCount: 2,
@@ -314,6 +372,7 @@ const SESSION_SPECS: SessionSpec[] = [
     tokensOutput: 0,
     linesAdded: 148,
     linesRemoved: 22,
+    gitCommands: 2,
     taskCount: 2,
     repoName: 'nr-ai-features',
   },
@@ -331,6 +390,7 @@ const SESSION_SPECS: SessionSpec[] = [
     tokensOutput: 18000,
     linesAdded: 94,
     linesRemoved: 38,
+    gitCommands: 1,
     antiPatterns: [
       { type: 'stuck_loop', count: 3 },
       { type: 'thrashing_reads', count: 2 },
@@ -354,30 +414,35 @@ const SESSION_SPECS: SessionSpec[] = [
     tokensOutput: 6000,
     linesAdded: 196,
     linesRemoved: 44,
+    gitCommands: 3,
     testRunCount: 2,
     testPassCount: 2,
     taskCount: 3,
     repoName: 'nr-dashboard',
   },
   {
-    name: 'security-audit-review',
+    // HIGH COST: Opus doing security audit + remediation
+    name: 'security-audit-and-remediation',
     platform: 'claude-code',
     model: 'claude-opus-4-6',
     startDaysAgo: 1,
     startHour: 16,
-    durationMin: 42,
-    toolBreakdown: { Read: 18, Grep: 12, Bash: 4, Write: 2 },
-    efficiencyScore: 0.87,
-    estimatedCostUsd: 3.8,
-    tokensInput: 88000,
-    tokensOutput: 22000,
-    linesAdded: 12,
-    linesRemoved: 8,
-    taskCount: 1,
+    durationMin: 195,
+    toolBreakdown: { Read: 36, Grep: 24, Bash: 18, Edit: 14, Write: 8 },
+    efficiencyScore: 0.84,
+    estimatedCostUsd: 124.8,
+    tokensInput: 2800000,
+    tokensOutput: 640000,
+    linesAdded: 342,
+    linesRemoved: 188,
+    gitCommands: 6,
+    testRunCount: 4,
+    testPassCount: 4,
+    taskCount: 5,
     repoName: 'nr-security',
   },
 
-  // ── Today (completed earlier) ──────────────────────────────────────────────
+  // ── Today (completed) ──────────────────────────────────────────────────────
   {
     name: 'monitoring-alerts-config',
     platform: 'claude-code',
@@ -392,6 +457,7 @@ const SESSION_SPECS: SessionSpec[] = [
     tokensOutput: 11000,
     linesAdded: 167,
     linesRemoved: 34,
+    gitCommands: 4,
     testRunCount: 4,
     testPassCount: 4,
     buildRunCount: 1,
@@ -413,6 +479,7 @@ const SESSION_SPECS: SessionSpec[] = [
     tokensOutput: 5500,
     linesAdded: 0,
     linesRemoved: 0,
+    gitCommands: 2,
     taskCount: 1,
     repoName: 'nr-auth-service',
   },
@@ -430,97 +497,266 @@ const SESSION_SPECS: SessionSpec[] = [
     tokensOutput: 0,
     linesAdded: 88,
     linesRemoved: 12,
+    gitCommands: 2,
     taskCount: 2,
     repoName: 'nr-ai-features',
   },
 ];
 
 // ---------------------------------------------------------------------------
-// Live buffer injection — one "in-progress" session for the Today live tail
+// Live simulation
 // ---------------------------------------------------------------------------
 
-function buildLiveBufferEvents(sessionId: string): string[] {
-  const now = Date.now();
-  const cwd = `/Users/${DEVELOPER}/projects/nr-platform`;
-  const lines: string[] = [];
+interface LiveSession {
+  id: string;
+  name: string;
+  platform: string;
+  model: string;
+  cwd: string;
+  bufferPath: string;
+  // Pricing: inputPerMTok, outputPerMTok
+  inputRate: number;
+  outputRate: number;
+  callCount: number;
+  totalCostUsd: number;
+  sprintFactor: number; // multiplier for token volume (1=normal, 5=heavy)
+}
 
-  const calls: Array<{ tool: string; input: object; output: object; dur: number }> = [
+const LIVE_SESSION_SPECS: Omit<LiveSession, 'id' | 'bufferPath' | 'callCount' | 'totalCostUsd'>[] =
+  [
     {
-      tool: 'Read',
-      input: { file_path: 'src/api/client.ts' },
-      output: { content_length: 2840 },
-      dur: 82,
+      name: 'ai-observability-platform',
+      platform: 'claude-code',
+      model: 'claude-opus-4-6',
+      cwd: `/Users/${DEVELOPER}/projects/nr-observability`,
+      inputRate: 5.0,
+      outputRate: 25.0,
+      sprintFactor: 8, // HEAVY — this one hits $100s fast
     },
     {
-      tool: 'Read',
-      input: { file_path: 'src/hooks/useMetrics.ts' },
-      output: { content_length: 1620 },
-      dur: 64,
+      name: 'data-pipeline-refactor',
+      platform: 'claude-code',
+      model: 'claude-sonnet-4-6',
+      cwd: `/Users/${DEVELOPER}/projects/nr-pipelines`,
+      inputRate: 3.0,
+      outputRate: 15.0,
+      sprintFactor: 3,
     },
     {
-      tool: 'Bash',
-      input: { command: 'npm test -- --testPathPattern=metrics' },
-      output: { exitCode: 0 },
-      dur: 4200,
+      name: 'terraform-cloud-migration',
+      platform: 'cursor',
+      model: 'claude-sonnet-4-6',
+      cwd: `/Users/${DEVELOPER}/projects/nr-infra`,
+      inputRate: 3.0,
+      outputRate: 15.0,
+      sprintFactor: 2,
     },
     {
-      tool: 'Edit',
-      input: { file_path: 'src/hooks/useMetrics.ts', old_string: 'any', new_string: 'unknown' },
-      output: { success: true },
-      dur: 120,
+      name: 'agent-workflow-research',
+      platform: 'antigravity',
+      model: 'gemini-3.1-pro',
+      cwd: `/Users/${DEVELOPER}/projects/nr-agents`,
+      inputRate: 2.0,
+      outputRate: 10.0,
+      sprintFactor: 2,
     },
     {
-      tool: 'Write',
-      input: { file_path: 'src/api/types.ts', content: '// generated types' },
-      output: { success: true },
-      dur: 95,
+      name: 'frontend-dashboard-rebuild',
+      platform: 'windsurf',
+      model: 'gemini-2.5-flash',
+      cwd: `/Users/${DEVELOPER}/projects/nr-dashboard`,
+      inputRate: 0.075,
+      outputRate: 0.3,
+      sprintFactor: 4,
+    },
+    {
+      name: 'security-compliance-scan',
+      platform: 'claude-code',
+      model: 'claude-opus-4-6',
+      cwd: `/Users/${DEVELOPER}/projects/nr-security`,
+      inputRate: 5.0,
+      outputRate: 25.0,
+      sprintFactor: 5, // Also heavy
     },
   ];
 
-  let ts = now - calls.reduce((s, c) => s + c.dur + randInt(500, 2000), 0) - 30000;
-  const toolUseIds = calls.map(() => `live_${randomUUID().slice(0, 8)}`);
+const LIVE_TOOLS: Record<string, string[]> = {
+  'claude-code': ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob', 'Agent'],
+  cursor: ['Read', 'Edit', 'Write', 'Bash', 'Grep'],
+  antigravity: ['Read', 'Write', 'Edit', 'Bash', 'AskPermission'],
+  windsurf: ['Read', 'Edit', 'Write', 'Bash'],
+};
 
-  for (let i = 0; i < calls.length; i++) {
-    const c = calls[i]!;
-    const toolUseId = toolUseIds[i]!;
-    const preTs = ts;
-    const postTs = ts + c.dur;
+const LIVE_BASH_CMDS = [
+  'npm test',
+  'npm run build',
+  'npm run lint',
+  'git commit -m "feat: improve performance"',
+  'git push origin feature/live-work',
+  'git pull origin main',
+  'terraform plan',
+  'grep -rn "TODO" src/',
+  'jest --coverage',
+  'eslint src/ --fix',
+];
 
-    lines.push(
-      JSON.stringify({
-        mode: 'pre',
-        tool: c.tool,
-        timestamp: preTs,
-        inputSize: JSON.stringify(c.input).length,
-        inputHash: randomUUID().slice(0, 16),
-        toolInput: c.input,
-        sessionId,
-        cwd,
-        toolUseId,
-        session_name: 'nr-platform',
-        platform: 'claude-code',
-      }),
-    );
-    lines.push(
-      JSON.stringify({
-        mode: 'post',
-        tool: c.tool,
-        timestamp: postTs,
-        outputSize: 512,
-        success: true,
-        toolOutput: c.output,
-        sessionId,
-        cwd,
-        toolUseId,
-        session_name: 'nr-platform',
-        platform: 'claude-code',
-      }),
-    );
+function appendBufferEvent(bufferPath: string, event: object): void {
+  appendFileSync(bufferPath, JSON.stringify(event) + '\n');
+}
 
-    ts = postTs + randInt(800, 3000);
+function emitToolCallPair(session: LiveSession): void {
+  const now = Date.now();
+  const tools = LIVE_TOOLS[session.platform] ?? ['Read', 'Write', 'Bash'];
+  const tool = pick(tools);
+  const toolUseId = `live_${randomUUID().slice(0, 8)}`;
+  const dur = randInt(80, 4000);
+
+  const input: Record<string, unknown> = {};
+  const output: Record<string, unknown> = { success: true };
+  if (tool === 'Read' || tool === 'Write' || tool === 'Edit') {
+    input.file_path = pick(PROJECT_FILES);
+    if (tool === 'Write') input.content = '// updated';
+  }
+  if (tool === 'Bash') {
+    input.command = pick(LIVE_BASH_CMDS);
+    output.exitCode = 0;
   }
 
-  return lines;
+  const base = {
+    sessionId: session.id,
+    cwd: session.cwd,
+    toolUseId,
+    session_name: session.name,
+    platform: session.platform,
+  };
+
+  appendBufferEvent(session.bufferPath, {
+    mode: 'pre',
+    tool,
+    timestamp: now - dur,
+    inputSize: 256,
+    inputHash: randomUUID().slice(0, 16),
+    toolInput: input,
+    ...base,
+  });
+  appendBufferEvent(session.bufferPath, {
+    mode: 'post',
+    tool,
+    timestamp: now,
+    outputSize: 512,
+    success: true,
+    toolOutput: output,
+    ...base,
+  });
+}
+
+function emitTokenEvent(session: LiveSession): void {
+  const baseInputK = randInt(8, 32) * session.sprintFactor;
+  const baseOutputK = randInt(2, 8) * session.sprintFactor;
+  const inputTokens = baseInputK * 1000;
+  const outputTokens = baseOutputK * 1000;
+  const cost = (inputTokens * session.inputRate + outputTokens * session.outputRate) / 1_000_000;
+
+  session.totalCostUsd += cost;
+
+  appendBufferEvent(session.bufferPath, {
+    mode: 'token',
+    timestamp: Date.now(),
+    inputTokens,
+    outputTokens,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    model: session.model,
+    sessionId: session.id,
+  });
+}
+
+function runLiveSimulation(): void {
+  console.log('\n🎬 Live simulation mode — press Ctrl+C to stop\n');
+  console.log(
+    `  Simulating ${LIVE_SESSION_SPECS.length} concurrent sessions for up to ${LIVE_DURATION_S}s\n`,
+  );
+
+  // Create live sessions
+  const sessions: LiveSession[] = LIVE_SESSION_SPECS.map((spec) => {
+    const id = randomUUID();
+    const bufferPath = resolve(STORAGE_PATH, `buffer-${id}.jsonl`);
+    const session: LiveSession = { id, bufferPath, callCount: 0, totalCostUsd: 0, ...spec };
+    writeFileSync(bufferPath, '', { mode: 0o600 });
+
+    console.log(`  ▶ ${spec.name.padEnd(35)} ${spec.platform.padEnd(14)} ${spec.model}`);
+    return session;
+  });
+
+  console.log(`\n  Tick every ~2s. High-cost sessions (⚡) will trigger budget alerts.\n`);
+  console.log(`  Session                              Platform       Cost so far`);
+  console.log(`  ${'─'.repeat(70)}`);
+
+  const startTime = Date.now();
+  let tick = 0;
+
+  const interval = setInterval(() => {
+    tick++;
+    const elapsed = (Date.now() - startTime) / 1000;
+
+    // Each tick: emit 1-3 tool call pairs + 1 token event per session
+    for (const session of sessions) {
+      const callsThisTick = randInt(1, 3);
+      for (let i = 0; i < callsThisTick; i++) {
+        emitToolCallPair(session);
+        session.callCount += callsThisTick;
+      }
+      // Token events every 3 ticks
+      if (tick % 3 === 0) {
+        emitTokenEvent(session);
+      }
+    }
+
+    // Print status every 10 ticks (~20s)
+    if (tick % 10 === 0) {
+      process.stdout.write('\x1B[2K\r'); // clear line
+      for (const session of sessions) {
+        const costStr = session.totalCostUsd > 0 ? `$${session.totalCostUsd.toFixed(2)}` : '$0.00';
+        const alert =
+          session.totalCostUsd > 50 ? ' ⚡ HIGH' : session.totalCostUsd > 10 ? ' ⚠' : '';
+        console.log(
+          `  ${session.name.padEnd(35)} ${session.platform.padEnd(14)} ${costStr.padStart(10)}${alert}`,
+        );
+      }
+      const totalCost = sessions.reduce((s, sess) => s + sess.totalCostUsd, 0);
+      const totalCalls = sessions.reduce((s, sess) => s + sess.callCount, 0);
+      console.log(
+        `\n  Elapsed: ${elapsed.toFixed(0)}s | Calls: ${totalCalls} | Total cost: $${totalCost.toFixed(2)}\n`,
+      );
+    }
+
+    // Stop after duration
+    if (elapsed >= LIVE_DURATION_S) {
+      clearInterval(interval);
+      cleanup(sessions);
+    }
+  }, 2000);
+
+  // Handle Ctrl+C
+  process.on('SIGINT', () => {
+    clearInterval(interval);
+    cleanup(sessions);
+    process.exit(0);
+  });
+
+  // Keep process alive
+  process.stdin.resume();
+}
+
+function cleanup(sessions: LiveSession[]): void {
+  console.log('\n\n  Cleaning up live session buffers...');
+  for (const session of sessions) {
+    if (existsSync(session.bufferPath)) {
+      unlinkSync(session.bufferPath);
+    }
+  }
+  const totalCost = sessions.reduce((s, sess) => s + sess.totalCostUsd, 0);
+  console.log(`  Done. Final cost simulated: $${totalCost.toFixed(2)}\n`);
 }
 
 // ---------------------------------------------------------------------------
@@ -529,9 +765,8 @@ function buildLiveBufferEvents(sessionId: string): string[] {
 
 function clearDemoData(): number {
   if (!existsSync(SESSIONS_DIR)) return 0;
-  const files = readdirSync(SESSIONS_DIR).filter((f) => f.endsWith('.json'));
   let removed = 0;
-  for (const file of files) {
+  for (const file of readdirSync(SESSIONS_DIR).filter((f) => f.endsWith('.json'))) {
     const p = resolve(SESSIONS_DIR, file);
     try {
       const data = JSON.parse(readFileSync(p, 'utf-8'));
@@ -540,12 +775,11 @@ function clearDemoData(): number {
         removed++;
       }
     } catch {
-      // skip malformed files
+      // skip
     }
   }
-  // Also remove any demo buffer files
-  const storageFiles = readdirSync(STORAGE_PATH).filter((f) => f.startsWith('buffer-demo-'));
-  for (const f of storageFiles) {
+  // Remove any stale live buffers
+  for (const f of readdirSync(STORAGE_PATH).filter((f) => f.startsWith('buffer-demo-'))) {
     unlinkSync(resolve(STORAGE_PATH, f));
     removed++;
   }
@@ -567,33 +801,37 @@ function main(): void {
     return;
   }
 
-  // Clear existing demo data first
+  if (LIVE_MODE) {
+    runLiveSimulation();
+    return;
+  }
+
   const cleared = clearDemoData();
   if (cleared > 0) console.log(`  Cleared ${cleared} existing demo file(s)`);
 
-  // Filter specs to the requested number of days
   const specs = SESSION_SPECS.filter((s) => s.startDaysAgo < DAYS_BACK);
+  console.log(`  Developer: ${DEVELOPER}  |  Days: ${DAYS_BACK}  |  Sessions: ${specs.length}\n`);
 
-  console.log(`  Developer:  ${DEVELOPER}`);
-  console.log(`  Days:       ${DAYS_BACK}`);
-  console.log(`  Sessions:   ${specs.length}\n`);
-
-  const writtenFiles: string[] = [];
   const summary: Record<string, number> = {};
 
   for (const spec of specs) {
     const [filename, , session] = buildSession(spec);
-    const filepath = resolve(SESSIONS_DIR, filename);
-    writeFileSync(filepath, JSON.stringify(session, null, 2) + '\n', { mode: 0o600 });
-    writtenFiles.push(filename);
+    writeFileSync(resolve(SESSIONS_DIR, filename), JSON.stringify(session, null, 2) + '\n', {
+      mode: 0o600,
+    });
 
     const key = `${spec.platform}/${spec.model}`;
     summary[key] = (summary[key] ?? 0) + 1;
 
     const eff = (spec.efficiencyScore * 100).toFixed(0);
     const cost =
-      spec.estimatedCostUsd > 0 ? `$${spec.estimatedCostUsd.toFixed(2)}` : '(quota-based)';
-    const aps = spec.antiPatterns?.length ? ` ⚠ ${spec.antiPatterns.length} anti-pattern(s)` : '';
+      spec.estimatedCostUsd > 50
+        ? `💰 $${spec.estimatedCostUsd.toFixed(2)} HIGH`
+        : spec.estimatedCostUsd > 0
+          ? `$${spec.estimatedCostUsd.toFixed(2)}`
+          : '(quota-based)';
+    const aps = spec.antiPatterns?.length ? ` ⚠ ${spec.antiPatterns.length} pattern(s)` : '';
+    const git = spec.gitCommands ? ` 🔀 ${spec.gitCommands} git` : '';
     const dLabel =
       spec.startDaysAgo === 0
         ? 'today'
@@ -601,40 +839,29 @@ function main(): void {
           ? 'yesterday'
           : `${spec.startDaysAgo}d ago`;
     console.log(
-      `  ✓ [${dLabel.padEnd(9)}] ${spec.name.padEnd(32)} ${spec.platform.padEnd(14)} ${spec.model.padEnd(22)} eff=${eff}% cost=${cost}${aps}`,
+      `  ✓ [${dLabel.padEnd(9)}] ${spec.name.padEnd(38)} ${spec.platform.padEnd(14)} eff=${eff}% cost=${cost}${aps}${git}`,
     );
   }
 
-  // Inject live buffer for one in-progress session today
-  const liveSessionId = randomUUID();
-  const bufferPath = resolve(STORAGE_PATH, `buffer-${liveSessionId}.jsonl`);
-  const bufferLines = buildLiveBufferEvents(liveSessionId);
-  writeFileSync(bufferPath, bufferLines.join('\n') + '\n', { mode: 0o600 });
-  console.log(
-    `\n  ✓ [live      ] active-feature-work                    claude-code     claude-sonnet-4-6      (in progress)`,
-  );
-
-  // Print summary
-  console.log('\n─────────────────────────────────────────────────────────');
-  console.log('  Platform breakdown:');
-  for (const [key, count] of Object.entries(summary)) {
-    console.log(`    ${key.padEnd(40)} ${count} session(s)`);
-  }
-
+  console.log('\n─────────────────────────────────────────────────────────────────────');
   const totalCost = specs.reduce((s, sp) => s + sp.estimatedCostUsd, 0);
   const totalCalls = specs.reduce(
     (s, sp) => s + Object.values(sp.toolBreakdown).reduce((a, b) => a + b, 0),
     0,
   );
   const avgEff = specs.reduce((s, sp) => s + sp.efficiencyScore, 0) / specs.length;
+  const highCost = specs.filter((s) => s.estimatedCostUsd > 50);
 
-  console.log(`\n  Total sessions:    ${specs.length + 1} (${specs.length} historical + 1 live)`);
-  console.log(`  Total tool calls:  ${totalCalls}`);
-  console.log(`  Total cost:        $${totalCost.toFixed(2)}`);
-  console.log(`  Avg efficiency:    ${(avgEff * 100).toFixed(0)}%`);
-
-  console.log(`\n✅ Done! Open http://localhost:7777 to see the demo data.`);
-  console.log(`   Run with --clear to remove all generated sessions.\n`);
+  console.log(
+    `\n  Sessions: ${specs.length}  |  Tool calls: ${totalCalls}  |  Total cost: $${totalCost.toFixed(2)}  |  Avg efficiency: ${(avgEff * 100).toFixed(0)}%`,
+  );
+  if (highCost.length) {
+    console.log(
+      `  ⚡ High-cost sessions: ${highCost.map((s) => `${s.name} ($${s.estimatedCostUsd.toFixed(0)})`).join(', ')}`,
+    );
+  }
+  console.log(`\n✅ Done! Open http://localhost:7777 to see the data.`);
+  console.log(`   For live simulation: npm run demo-data -- --live\n`);
 }
 
 main();
