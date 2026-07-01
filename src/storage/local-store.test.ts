@@ -622,6 +622,55 @@ describe('LocalStore', () => {
       const all = drainAll.drainAllBuffers(); // default: no option passed
       expect(all.map((e) => e.tool)).toEqual(['with-heartbeat']);
     });
+
+    // ---------------------------------------------------------------------------
+    // REGRESSION GUARD: multi-session live visibility
+    //
+    // This test prevents the regression introduced by skipActiveHeartbeats: true
+    // in --local mode. When that flag was set, ALL sessions with active heartbeats
+    // (including Claude Code windows) disappeared from the Today/Sessions live view
+    // because --local refused to drain their buffers.
+    //
+    // The fix is skipActiveHeartbeats: false (the default). This test verifies the
+    // core contract: drainAllBuffers must return events from ALL concurrent sessions
+    // regardless of whether those sessions have active heartbeat files. This is what
+    // makes the dashboard show multiple concurrent AI tool sessions simultaneously.
+    // ---------------------------------------------------------------------------
+    it('REGRESSION: drains all concurrent sessions even when all have live heartbeats (multi-session live visibility)', () => {
+      mkdirSync(tmpDir, { recursive: true });
+      // Simulate 3 concurrent AI tool sessions — each with an event in their buffer
+      // and a live heartbeat (as Claude Code --stdio sessions write).
+      const sessions = ['sess-claude-1', 'sess-claude-2', 'sess-claude-3'];
+      for (const id of sessions) {
+        new LocalStore(tmpDir, id).appendToBuffer(makeEvent({ tool: id }));
+        writeFileSync(resolve(tmpDir, `active-${id}.pid`), String(process.pid));
+      }
+
+      // --local mode: skipActiveHeartbeats MUST be false so all sessions are visible
+      const drainAll = new LocalStore(tmpDir);
+      const all = drainAll.drainAllBuffers({ skipActiveHeartbeats: false });
+
+      // All 3 sessions must appear — none suppressed due to their heartbeat
+      expect(all.map((e) => e.tool).sort()).toEqual(sessions.sort());
+    });
+
+    it('REGRESSION: setting skipActiveHeartbeats:true is the failure mode — documents the trade-off', () => {
+      mkdirSync(tmpDir, { recursive: true });
+      new LocalStore(tmpDir, 'sess-live-1').appendToBuffer(makeEvent({ tool: 'session-1' }));
+      new LocalStore(tmpDir, 'sess-live-2').appendToBuffer(makeEvent({ tool: 'session-2' }));
+      writeFileSync(resolve(tmpDir, 'active-sess-live-1.pid'), String(process.pid));
+      writeFileSync(resolve(tmpDir, 'active-sess-live-2.pid'), String(process.pid));
+
+      const drainAll = new LocalStore(tmpDir);
+      // When skipActiveHeartbeats:true, sessions with live heartbeats are invisible
+      // to the dashboard — this is the regression mode, not the intended behaviour
+      const skipped = drainAll.drainAllBuffers({ skipActiveHeartbeats: true });
+      expect(skipped).toHaveLength(0); // both sessions suppressed!
+
+      // Confirm the events are still there (just not drained)
+      expect(existsSync(resolve(tmpDir, 'buffer-sess-live-1.jsonl'))).toBe(true);
+      expect(existsSync(resolve(tmpDir, 'buffer-sess-live-2.jsonl'))).toBe(true);
+    });
   });
 
   describe('migrateLegacyBuffer()', () => {

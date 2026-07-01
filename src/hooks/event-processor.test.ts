@@ -161,6 +161,77 @@ describe('HookEventProcessor', () => {
     });
   });
 
+  // ---------------------------------------------------------------------------
+  // Multi-session event processing
+  //
+  // These tests verify that events from multiple concurrent AI sessions are all
+  // processed and attributed correctly. They are platform-agnostic — the event
+  // processor doesn't care if the sessions are from Claude Code, Antigravity CLI,
+  // or any other AI tool; all sessions must flow through without interference.
+  // ---------------------------------------------------------------------------
+  describe('processEvents() — multiple concurrent sessions', () => {
+    it('processes events from 3 concurrent sessions and attributes each correctly', () => {
+      const processor = new HookEventProcessor({ store, onRecord });
+
+      processor.processEvents([
+        makePreEvent({ sessionId: 'session-A', toolUseId: 'A-1', tool: 'Read', timestamp: 1000 }),
+        makePreEvent({ sessionId: 'session-B', toolUseId: 'B-1', tool: 'Write', timestamp: 1010 }),
+        makePreEvent({ sessionId: 'session-C', toolUseId: 'C-1', tool: 'Bash', timestamp: 1020 }),
+        makePostEvent({ sessionId: 'session-A', toolUseId: 'A-1', timestamp: 1100 }),
+        makePostEvent({ sessionId: 'session-B', toolUseId: 'B-1', timestamp: 1110 }),
+        makePostEvent({ sessionId: 'session-C', toolUseId: 'C-1', timestamp: 1120 }),
+      ]);
+
+      expect(records).toHaveLength(3);
+      const bySession = Object.fromEntries(records.map((r) => [r.sessionId, r]));
+      expect(bySession['session-A']?.toolName).toBe('Read');
+      expect(bySession['session-B']?.toolName).toBe('Write');
+      expect(bySession['session-C']?.toolName).toBe('Bash');
+    });
+
+    it('pairs pre/post events correctly across interleaved sessions (no cross-session mixing)', () => {
+      const processor = new HookEventProcessor({ store, onRecord });
+
+      // Events arrive interleaved — session A pre, session B pre, session A post, session B post
+      processor.processEvents([
+        makePreEvent({ sessionId: 'sess-X', toolUseId: 'X-1', tool: 'Read', timestamp: 1000 }),
+        makePreEvent({ sessionId: 'sess-Y', toolUseId: 'Y-1', tool: 'Bash', timestamp: 1005 }),
+        makePostEvent({ sessionId: 'sess-X', toolUseId: 'X-1', timestamp: 1100 }),
+        makePostEvent({ sessionId: 'sess-Y', toolUseId: 'Y-1', timestamp: 1110 }),
+      ]);
+
+      expect(records).toHaveLength(2);
+      // Each session's post paired with its own pre — no cross-session contamination
+      const recX = records.find((r) => r.sessionId === 'sess-X');
+      const recY = records.find((r) => r.sessionId === 'sess-Y');
+      expect(recX?.toolName).toBe('Read');
+      expect(recY?.toolName).toBe('Bash');
+      expect(recX?.durationMs).toBe(100); // 1100 - 1000
+      expect(recY?.durationMs).toBe(105); // 1110 - 1005
+    });
+
+    it('each session accumulates tool calls independently', () => {
+      const processor = new HookEventProcessor({ store, onRecord });
+
+      // Session A does 3 tool calls, session B does 1
+      for (let i = 0; i < 3; i++) {
+        processor.processEvents([
+          makePreEvent({ sessionId: 'sess-busy', toolUseId: `busy-${i}`, timestamp: 1000 + i }),
+          makePostEvent({ sessionId: 'sess-busy', toolUseId: `busy-${i}`, timestamp: 1100 + i }),
+        ]);
+      }
+      processor.processEvents([
+        makePreEvent({ sessionId: 'sess-idle', toolUseId: 'idle-0', timestamp: 2000 }),
+        makePostEvent({ sessionId: 'sess-idle', toolUseId: 'idle-0', timestamp: 2100 }),
+      ]);
+
+      const busyRecords = records.filter((r) => r.sessionId === 'sess-busy');
+      const idleRecords = records.filter((r) => r.sessionId === 'sess-idle');
+      expect(busyRecords).toHaveLength(3);
+      expect(idleRecords).toHaveLength(1);
+    });
+  });
+
   describe('processEvents() — orphaned post (no matching pre)', () => {
     it('creates a record with durationMs: null', () => {
       const processor = new HookEventProcessor({ store, onRecord });

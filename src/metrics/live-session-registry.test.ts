@@ -128,4 +128,75 @@ describe('LiveSessionRegistry', () => {
       reg.stopSampling();
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Multi-session visibility contract
+  //
+  // These tests verify that concurrent sessions from multiple AI tools all appear
+  // in the live registry simultaneously. This is the contract that underlies the
+  // Today page showing multiple concurrent sessions. Platform-agnostic: the registry
+  // doesn't care about Claude Code vs Antigravity vs anything else — all touched
+  // sessions must be visible.
+  // ---------------------------------------------------------------------------
+  describe('multi-session visibility contract', () => {
+    it('tracks all concurrent sessions simultaneously', () => {
+      const reg = new LiveSessionRegistry();
+      reg.touch('session-1');
+      reg.touch('session-2');
+      reg.touch('session-3');
+
+      const live = reg.getLiveSessions();
+      expect(live).toHaveLength(3);
+      expect(live).toEqual(expect.arrayContaining(['session-1', 'session-2', 'session-3']));
+    });
+
+    it('derives session names from cwd for all concurrent sessions', () => {
+      const reg = new LiveSessionRegistry();
+      reg.touch('session-A', '/home/user/project-alpha');
+      reg.touch('session-B', '/home/user/project-beta');
+      reg.touch('session-C', '/home/user/project-gamma');
+
+      expect(reg.getSessionName('session-A')).toBe('project-alpha');
+      expect(reg.getSessionName('session-B')).toBe('project-beta');
+      expect(reg.getSessionName('session-C')).toBe('project-gamma');
+    });
+
+    it('falls back to provided name when cwd is absent (Antigravity --print sessions)', () => {
+      const reg = new LiveSessionRegistry();
+      // agy --print sessions may not have a workspace path; use short UUID fallback
+      reg.touch('agy-session-uuid', undefined, 'agy-sess');
+      expect(reg.getSessionName('agy-session-uuid')).toBe('agy-sess');
+    });
+
+    it('upgrades fallback name to real cwd name when cwd arrives later', () => {
+      const reg = new LiveSessionRegistry();
+      // First touch has no cwd — fallback UUID registered
+      reg.touch('sess-123', undefined, 'sess-123');
+      expect(reg.getSessionName('sess-123')).toBe('sess-123');
+      // Subsequent touch has a real workspace path — should upgrade
+      reg.touch('sess-123', '/home/user/my-project');
+      expect(reg.getSessionName('sess-123')).toBe('my-project');
+    });
+
+    it('all sessions remain visible after being updated (activity keeps them live)', () => {
+      const reg = new LiveSessionRegistry(5000);
+      reg.touch('sess-active');
+      reg.touch('sess-also-active');
+      jest.advanceTimersByTime(3000); // within threshold
+      reg.touch('sess-active'); // keep alive
+      jest.advanceTimersByTime(3000); // sess-also-active now stale, sess-active still live
+      const live = reg.getLiveSessions();
+      expect(live).toContain('sess-active');
+      expect(live).not.toContain('sess-also-active');
+    });
+
+    it('peakConcurrent tracks the highest number of simultaneous sessions seen', () => {
+      const reg = new LiveSessionRegistry();
+      reg.touch('sess-1');
+      reg.touch('sess-2');
+      reg.touch('sess-3');
+      // All 3 live at once
+      expect(reg.getPeakConcurrent()).toBe(3);
+    });
+  });
 });
