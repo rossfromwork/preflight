@@ -1250,7 +1250,14 @@ async function main(): Promise<void> {
       drainAllSessions: !options.stdio || isProvisional,
       // In --local mode, skip buffers owned by a live --stdio MCP session so
       // that session can compute full analytics without racing for its events.
-      skipActiveHeartbeats: options.local,
+      // Note: skipActiveHeartbeats was previously enabled here to prevent --local
+      // from racing with --stdio sessions for their buffers. However, this caused
+      // live multi-session visibility to break — other Claude Code windows stopped
+      // appearing in the Today/Sessions page. Disabled to restore that behaviour.
+      // The trade-off: --stdio sessions get slightly less events to compute analytics
+      // from, but --local shows all active sessions live which is more valuable for
+      // the demo use case.
+      skipActiveHeartbeats: false,
       onRecord: (record) => {
         if (!config || !sessionTracker || !taskDetector) {
           logger.warn('onRecord called before full initialization; skipping');
