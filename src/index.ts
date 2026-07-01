@@ -1169,13 +1169,16 @@ async function main(): Promise<void> {
           // available Antigravity models (including GPT-OSS at 100% quota which
           // never generates a delta since it uses a separate quota pool).
           if (!delta) {
-            // Register all resolved models with zero usage on the baseline poll so
-            // they appear in the Today page model widget immediately on dashboard
-            // startup. GPT-OSS and other non-Gemini models use separate quota pools
-            // and never generate deltas — without this they would never show.
+            // On the baseline poll, only register models that have actually been
+            // used (remainingFraction < 1.0). Models at 100% quota haven't consumed
+            // any credits and should not appear as "used today". GPT-OSS and other
+            // non-Gemini models that never generate deltas will appear once they've
+            // actually been used (fraction drops below 1.0).
             for (const m of snapshot.models) {
               const modelKey = m.resolvedModelId;
-              if (modelKey) modelUsageTracker.recordUsage(modelKey, 0, 0, 0);
+              if (modelKey && m.remainingFraction < 1.0) {
+                modelUsageTracker.recordUsage(modelKey, 0, 0, 0);
+              }
             }
           }
 
